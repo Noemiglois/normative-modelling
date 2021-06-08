@@ -30,45 +30,31 @@ list.of.packages <- c("viridis", "tidyverse", "MatchIt", "grid", "png",
                       "gridExtra", "parallel", "nlme", "JMbayes", 
                       "BiocManager", "Biostrings", "lme4", "ggplot2", 
                       "Hmisc", "devtools", "longCombat", "neuroCombat", 
-                      "tinytex", "knitr", "dplyr")
+                      "tinytex", "knitr", "dplyr", "variancePartition",
+                      "Rmisc", "doParallel")
+
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+  if(length(new.packages)>0) { install.packages(new.packages)}
 
 # load them all
 libraries(list.of.packages)
-ncores = detectCores() # Number of cores available in pc
-rm(list.of.packages)
+ncores <- detectCores() # Number of cores available in pc
+rm(list.of.packages, new.packages)
 ```
 
 
 
 ```{r, eval = FALSE, include = FALSE}
-library(viridis)   # install.packages("viridis")
-library(tidyverse) # install.packages("tidyverse")
-library(MatchIt)
-library(grid)
-library(png)
-library(gridExtra)
-library(parallel)
-library(nlme)
-library(JMbayes)
-# if (!requireNamespace("BiocManager", quietly = TRUE))
-#     install.packages("BiocManager")
-# BiocManager::install("Biostrings")
-library(BiocManager)
-library(Biostrings)
-library(lme4) # install.packages("lme4")
-library(ggplot2)
-library(Hmisc)
-library('devtools') #install.packages("devtools")
-library('longCombat') # install_github("jcbeer/longCombat")
-library('neuroCombat') # install_github("jfortin1/CombatHarmonization/R/neuroCombat")
-library(tinytex) #tinytex::install_tinytex()
-ncores = detectCores() # Number of cores available in pc
- 
-# library(dplyr) # install.packages("dplyr")
-#
-# library(pbmcapply)
-# 
-# library(sets)
+install_github("jcbeer/longCombat")
+install_github("jfortin1/neuroCombatData")
+install_github("jfortin1/neuroCombat_Rpackage")
+BiocManager::install("Biostrings")
+BiocManager::install("variancePartition")
+install_version("dplyr", version = "1.0.5", repos = "http://cran.us.r-project.org")
+tinytex::install_tinytex()
+
+install.packages("dplyr")           # Install dplyr package
+library("dplyr")                    # Load dplyr package
 ```
 
 ### Set working directory and load functions

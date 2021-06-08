@@ -1,4 +1,4 @@
-getStatistics <- function(Zs, lab){
+getStatistics <- function(Zs, lab, parc){
   pcol <- viridis(1)
   n_tp <- unique(Zs$timepoint)
 
@@ -6,8 +6,8 @@ getStatistics <- function(Zs, lab){
     dataf <- Zs %>% 
       filter(timepoint==tp)%>%
       group_by(region, timepoint)%>%
-      summarise(num = sum(abs(z)>1.96), den = sum(abs(z)<1.96)) %>%
-      summarise(region=region, ratio = num/den)
+      dplyr::summarise(num = sum(abs(z)>1.96), den = sum(abs(z)<1.96)) %>%
+      dplyr::summarise(region=region, ratio = num/den)
     
     prev <- ggplot(dataf, aes(ratio, fill = pcol)) + 
       geom_density(alpha = 0.8) + theme_minimal() +
@@ -17,7 +17,7 @@ getStatistics <- function(Zs, lab){
       theme(legend.position = 'none')
     
     # Save as png
-    png(file=paste0("/data_J/Results/Plots/prevalence_wscores_",tp,"_", lab,".png"), width=10, height=2.5, units="in",res=600)
+    png(file=paste0("/data_J/Results/Plots/", parc,"/prevalence_wscores_",tp,"_", lab,".png"), width=10, height=2.5, units="in",res=600)
     print(prev)
     dev.off()
     
@@ -63,7 +63,7 @@ getStatistics <- function(Zs, lab){
     # - log(0) = inf --> replace inf by 0.0
     ratio_ordered <- do.call(data.frame,lapply(ratio_ordered, function(x) replace(x, is.infinite(x),0)))
     write.table(ratio_ordered[,"ratio"], 
-                paste0("/data_J/Results/Files/GlobalRatioOrdered_",tp,"_", lab,".txt"), 
+                paste0("/data_J/Results/Files/", parc,"/GlobalRatioOrdered_",tp,"_", lab,".txt"), 
                 sep = "\t", 
                 row.names = FALSE,
                 col.names = FALSE)

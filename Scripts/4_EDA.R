@@ -13,7 +13,7 @@ EDA_match_ages <- function(df, match){
   return(cat("\nAges that doesn't match in patients vs controls in ", match, " dataset are:\n ", ages_no_match))
 }
 
-variancePartition <- function(df, measure){
+variancePartition <- function(df, measure, lab, par){
   ## PREPARE DATA ##
   
   reg_names <- colnames(df%>%select(ends_with(measure)))
@@ -46,12 +46,12 @@ variancePartition <- function(df, measure){
     Age <- df_tp$Age
     Sex <- df_tp$Sex
     Diagnosis <- df_tp$Diagnosis
-    Euler_numer <- df_tp$Euler_number
-    Individual <- df$Individual
+    Euler_number <- df_tp$Euler_number
+    Individual <- df_tp$Individual
     
     # Create formula
     # form <- ~Age+(1|Sex)+(1|Diagnosis)+Euler_numer+(1|Individual)
-    form <- ~Age+Sex+Diagnosis+Euler_numer
+    form <- ~ Age+Sex+Diagnosis+Euler_number
     
     # Create dataframe with predictors
     info <- df_tp[,c("Age", "Sex", "Diagnosis","Euler_number")]
@@ -67,13 +67,8 @@ variancePartition <- function(df, measure){
     violins <- plotVarPart(vp,col = c("#5DC863FF", "#3B528BFF", "#21908CFF", "#440154FF", "lightgrey"))
     
     # Save as png
-    png(file=paste0("/data_J/results/Plots/violin_tp",tp,".png"), width=5, height=2.5, units="in",res=600)
+    png(file=paste0("/data_J/Results/Plots/",par,"/violin_tp",tp,"_",lab,".png"), width=5, height=2.5, units="in",res=600)
     print(violins)
     dev.off()
-    
-    # # Save as pdf
-    # pdf(file = paste0("/data_J/results/Plots/violin_tp",tp,".pdf"), width = 12, height = 6)
-    # multiplot(violins,cols = 1)
-    # dev.off()
   }
 }

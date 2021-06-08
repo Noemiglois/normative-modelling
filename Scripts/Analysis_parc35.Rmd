@@ -51,7 +51,7 @@ install_github("jfortin1/neuroCombat_Rpackage")
 BiocManager::install("Biostrings")
 BiocManager::install("variancePartition")
 install_version("dplyr", version = "1.0.5", repos = "http://cran.us.r-project.org")
-
+tinytex::install_tinytex()
 
 install.packages("dplyr")           # Install dplyr package
 library("dplyr")                    # Load dplyr package
@@ -188,7 +188,6 @@ Zs_NOmatch <- run_NormativeModel(df_lC_NO_matched,
                                  harmonization = "lC")
 ```
 
-
 ## Match-it dataframe (longCombat):
 
 ```{r}
@@ -213,8 +212,8 @@ p_val_FDR <- Apply_FDR_Correction(p_val)
 
 ```{r echo=FALSE, results='hold'}
 cat("Without FDR correction:\n")
-cat("Variable dcode has statistical significance for ",sum(p_val[,"dcode"]<0.05),"regions\n")
-cat("Variable dcode_age has statistical significance for ",sum(p_val[,"dcode_age"]<0.05),"regions\n")
+cat("Variable dcode has statistical significance for ", sum(p_val[,"dcode"]<0.05),"/",length(p_val[,"dcode"]), "regions\n")
+cat("Variable dcode_age has statistical significance for ",sum(p_val[,"dcode_age"]<0.05),"/",length(p_val[,"dcode_age"]), "regions\n")
 ```
 
 ```{r echo=FALSE}
@@ -223,8 +222,8 @@ head(p_val, 4)
 
 ```{r echo=FALSE, results='hold'}
 cat("With FDR correction:\n")
-cat("Variable dcode has statistical significance for ", sum(p_val_FDR[,"dcode"]<0.05),"regions\n")
-cat("Variable dcode_age has statistical significance for ",sum(p_val_FDR[,"dcode_age"]<0.05),"regions")
+cat("Variable dcode has statistical significance for ", sum(p_val_FDR[,"dcode"]<0.05),"/",length(p_val[,"dcode"]),"regions\n")
+cat("Variable dcode_age has statistical significance for ",sum(p_val_FDR[,"dcode_age"]<0.05),"/",length(p_val[,"dcode_age"]),"regions")
 ```
 
 ```{r echo=FALSE}
@@ -259,8 +258,8 @@ p_val_FDR <- Apply_FDR_Correction(p_val)
 
 ```{r echo=FALSE, results='hold'}
 cat("Without FDR correction:\n")
-cat("Variable dcode has statistical significance for ",sum(p_val[,"dcode"]<0.05),"regions\n")
-cat("Variable dcode_age has statistical significance for ",sum(p_val[,"dcode_age"]<0.05),"regions\n")
+cat("Variable dcode has statistical significance for ",sum(p_val[,"dcode"]<0.05),"/",length(p_val[,"dcode"]),"regions\n")
+cat("Variable dcode_age has statistical significance for ",sum(p_val[,"dcode_age"]<0.05),"/",length(p_val[,"dcode_age"]),"regions\n")
 ```
 
 ```{r echo=FALSE}
@@ -269,8 +268,8 @@ head(p_val, 4)
 
 ```{r, echo=FALSE, results='hold'}
 cat("With FDR correction:\n")
-cat("Variable dcode has statistical significance for ", sum(p_val_FDR[,"dcode"]<0.05),"regions\n")
-cat("Variable dcode_age has statistical significance for ",sum(p_val_FDR[,"dcode_age"]<0.05),"regions")
+cat("Variable dcode has statistical significance for ", sum(p_val_FDR[,"dcode"]<0.05),"/",length(p_val[,"dcode"]),"regions\n")
+cat("Variable dcode_age has statistical significance for ",sum(p_val_FDR[,"dcode_age"]<0.05),"/",length(p_val[,"dcode_age"]),"regions")
 ```
 
 ```{r echo=FALSE}
@@ -341,8 +340,8 @@ We computed the number of deviant samples ($Z<-1.96$ and $Z>1.96$):
 
 ```{r, eval=FALSE, include=FALSE}
 Z <- Zs_match %>%
-  mutate(deviant = ifelse(z > -1.96 & z < 1.96, 0, z))%>%
-  mutate(deviant = ifelse(z < -1.96, -1, deviant))%>%
+  mutate(deviant = ifelse(z > -1.96 & z < 1.96, 0, z)) %>%
+  mutate(deviant = ifelse(z < -1.96, -1, deviant)) %>%
   mutate(deviant = ifelse(z >  1.96, 1 , deviant))
 
 t(table(Z$deviant, Z$timepoint)) # first 3x3 row-col
@@ -375,9 +374,9 @@ We computed the number of subjects that are **deviant at timepoint 1** and stay 
 Z <- Zs_match %>%
   mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
   group_by(region, subID) %>%
-  summarise(mul = prod(dev)) %>% # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::summarise(mul = prod(dev)) %>% # Multiplicamos los dev de todos los tp de cada subject por cada región
   group_by(region) %>%           # Así, sólo valen distinto de 0 los que tienen todos los tp=1
-  summarise(sol = sum(mul)) %>%
+  dplyr::summarise(sol = sum(mul)) %>%
   arrange(desc(sol))
 
 round(Z[1,2]*100/length(unique(Zs_match$subID)),2) # Percentage in the text
@@ -402,9 +401,9 @@ Z <- Zs_match %>%
          dev_fup = ifelse((z < -1.96 | z > 1.96)&timepoint>1, 1, 0)) %>%  # Si se desvía vale 1
   mutate(cond=non_dev_tp1+dev_fup)%>% # Sumamos ambas columnas para obtener una sólo
   group_by(region,subID) %>%
-  summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
+  dplyr::summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
   group_by(region) %>%            # Así, sólo valen 1 los que tienen todos los tp=1
-  summarise(sol = sum(mul)) %>%
+  dplyr::summarise(sol = sum(mul)) %>%
   arrange(desc(sol))
 
 round(Z[1,2]*100/length(unique(Zs_match$subID)),2) # Percentage in the text
@@ -438,7 +437,7 @@ for (tp in 1:3){ # for each timepoint
     filter(timepoint==tp) %>%
     mutate(dev = ifelse(z < -1.96 | z > 1.96, 1, 0))%>%
     group_by(region)%>%
-    summarise(nreg_dev = sum(dev==1),
+    dplyr::summarise(nreg_dev = sum(dev==1),
               nreg_nondev = sum(dev==0))%>%
     mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),3)) %>%
     arrange(desc(perc_dev))
@@ -470,7 +469,7 @@ for (tp in 1:3){ # for each timepoint
     filter(timepoint==tp) %>%
     mutate(deviant = ifelse(z < -1.96, 1, 0)) %>% # Infra-normal
     group_by(region) %>%
-    summarise(nreg_dev     = sum(deviant==1),
+    dplyr::summarise(nreg_dev     = sum(deviant==1),
               nreg_nondev  = sum(deviant==0)) %>%
     mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),3)) %>%
     arrange(desc(perc_dev))
@@ -483,7 +482,7 @@ for (tp in 1:3){ # for each timepoint
     filter(timepoint==tp) %>%
     mutate(deviant = ifelse(z < -1.96, 1, 0))%>% # Infra-normal
     group_by(region) %>%
-    summarise(nreg_dev     = sum(deviant==1),
+    dplyr::summarise(nreg_dev     = sum(deviant==1),
               nreg_nondev  = sum(deviant==0)) %>%
     mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),3)) %>%
     arrange(desc(perc_dev))
@@ -512,7 +511,7 @@ for (tp in 1:3){ # for each timepoint
     filter(timepoint==tp) %>%
     mutate(deviant = ifelse(z > 1.96, 1, 0))%>% # Supra-normal
     group_by(region) %>%
-    summarise(nreg_dev     = sum(deviant==1),
+    dplyr::summarise(nreg_dev     = sum(deviant==1),
               nreg_nondev  = sum(deviant==0)) %>%
     mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),3)) %>%
     arrange(desc(perc_dev))
@@ -537,11 +536,11 @@ for (tp in 1:3){ # for each timepoint
     mutate(deviant_infra = ifelse(z < -1.96, 1, 0))%>% # Infra-normal
     mutate(deviant_supra = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
     group_by(subID) %>%
-    summarise(nreg_dev_infra    = sum(deviant_infra==1),   # At least one region deviated
+    dplyr::summarise(nreg_dev_infra    = sum(deviant_infra==1),   # At least one region deviated
               nreg_dev_supra    = sum(deviant_supra==1))   %>%
     mutate(deviant_infra = ifelse(nreg_dev_infra>0, 1, 0), # At least one region deviated
            deviant_supra = ifelse(nreg_dev_supra>0, 1, 0)) %>%
-    summarise(pat_dev_infra    = sum(deviant_infra==1),
+    dplyr::summarise(pat_dev_infra    = sum(deviant_infra==1),
               pat_nondev_infra = sum(deviant_infra==0),
               pat_dev_supra    = sum(deviant_supra==1),
               pat_nondev_supra = sum(deviant_supra==0)) %>%
@@ -557,11 +556,11 @@ for (tp in 1:3){ # for each timepoint
     mutate(deviant_infra = ifelse(z < -1.96, 1, 0))%>% # Infra-normal
     mutate(deviant_supra = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
     group_by(subID) %>%
-    summarise(nreg_dev_infra    = sum(deviant_infra==1),
+    dplyr::summarise(nreg_dev_infra    = sum(deviant_infra==1),
               nreg_dev_supra    = sum(deviant_supra==1))   %>%
     mutate(deviant_infra = ifelse(nreg_dev_infra>0, 1, 0),
            deviant_supra = ifelse(nreg_dev_supra>0, 1, 0)) %>%
-    summarise(hc_dev_infra    = sum(deviant_infra==1),
+    dplyr::summarise(hc_dev_infra    = sum(deviant_infra==1),
               hc_nondev_infra = sum(deviant_infra==0),
               hc_dev_supra    = sum(deviant_supra==1),
               hc_nondev_supra = sum(deviant_supra==0)) %>%
@@ -606,8 +605,8 @@ for (tp in 1:3){ # for each timepoint
 En el eje de las x se representa el porcentaje de sujetos y en el eje y el número de regiones con el mismo ratio $\frac{|Z|>1.96}{|Z|<1.96}$. Se calcula para cada timepoint ($timepoint=1,2,3$).
 
 ```{r Ratio, warning=F, message = F}
-getStatistics(Zs_match,  "lC_match_parc35")
-getStatistics(Zs_NOmatch,"lC_NOmatch_parc35")
+getStatistics(Zs= Zs_match,  lab= "lC_match_parc35", parc= "parc35")
+getStatistics(Zs= Zs_NOmatch, lab= "lC_NOmatch_parc35", parc= "parc35")
 ```
 
 Show the results from the global ratios obtained:
@@ -615,9 +614,9 @@ Show the results from the global ratios obtained:
 ## Match-it dataframe (longCombat):
 
 ```{r show-png-prev_match, echo=FALSE}
-img1 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/prevalence_wscores_1_lC_match_parc35.png")), interpolate = FALSE)
-img2 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/prevalence_wscores_2_lC_match_parc35.png")), interpolate = FALSE)
-img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/prevalence_wscores_3_lC_match_parc35.png")), interpolate = FALSE)
+img1 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/prevalence_wscores_1_lC_match_parc35.png")), interpolate = FALSE)
+img2 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/prevalence_wscores_2_lC_match_parc35.png")), interpolate = FALSE)
+img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/prevalence_wscores_3_lC_match_parc35.png")), interpolate = FALSE)
 
 grid.arrange(img1, img2, img3, ncol = 1, nrow=3)
 ```
@@ -625,9 +624,9 @@ grid.arrange(img1, img2, img3, ncol = 1, nrow=3)
 ## NO Match-it dataframe (longCombat):
 
 ```{r show-png-prev-NOmatch, echo=FALSE}
-img1 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/prevalence_wscores_1_lC_NOmatch_parc35.png")), interpolate = FALSE)
-img2 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/prevalence_wscores_2_lC_NOmatch_parc35.png")), interpolate = FALSE)
-img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/prevalence_wscores_3_lC_NOmatch_parc35.png")), interpolate = FALSE)
+img1 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/prevalence_wscores_1_lC_NOmatch_parc35.png")), interpolate = FALSE)
+img2 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/prevalence_wscores_2_lC_NOmatch_parc35.png")), interpolate = FALSE)
+img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/prevalence_wscores_3_lC_NOmatch_parc35.png")), interpolate = FALSE)
 
 grid.arrange(img1, img2, img3, ncol = 1, nrow=3)
 ```
@@ -636,22 +635,21 @@ grid.arrange(img1, img2, img3, ncol = 1, nrow=3)
 
 
 ```{r}
-variancePartition(df = df_lC_NO_matched, 
+variancePartition(df = df_lC_NO_matched,
                   measure = "CT_freesurfer",
-                  lab = "lC_matched_parc35")
+                  lab = "lC_NO_matched_parc35",
+                  par = "parc35")
 
-variancePartition(df = df_lC_matched, 
-                  measure = "CT_freesurfer"),
-                  lab = "lC_NO_matched_parc35")
-tp <- 1
-lab <- "lC_matched_parc35"
-paste0("/data_J/results/Plots/violin_tp",tp,"_",lab,".png")
+variancePartition(df = df_lC_matched,
+                  measure = "CT_freesurfer",
+                  lab = "lC_matched_parc35",
+                  par = "parc35")
 ```
 
 ```{r show-png-violin, echo=FALSE}
-img1 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/violin_tp1.png")), interpolate = FALSE)
-img2 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/violin_tp2.png")), interpolate = FALSE)
-img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/violin_tp3.png")), interpolate = FALSE)
+img1 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp1_lC_NO_matched_parc35.png")), interpolate = FALSE)
+img2 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp2_lC_NO_matched_parc35.png")), interpolate = FALSE)
+img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp3_lC_NO_matched_parc35.png")), interpolate = FALSE)
 
 grid.arrange(img1, img2, img3, ncol = 1, nrow=3)
 ```
