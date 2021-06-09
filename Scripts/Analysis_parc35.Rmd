@@ -7,7 +7,6 @@ output:
   html_document: default
 ---
 
-
 ```{r setup I, include=F}
 knitr::opts_chunk$set(
   include = TRUE,  
@@ -295,19 +294,19 @@ hist(x4, main="p-vals with FDR (dcode_age)", col="green")
 
 
 ```{r eval=FALSE, include=FALSE}
-Z <- Zs_match %>% # change match / NOmatch
-  mutate(deviant = ifelse(z > -1.96 & z < 1.96, 1, 0))
+Z <- Zs_NOmatch %>% # change match / NOmatch
+  mutate(deviant = ifelse(z < -1.96 | z > 1.96, 1, 0))
 
 table(Z$timepoint) # 1st row
 table(Z$deviant, Z$timepoint) # 1st row is 2nd row
 t(table(Z$timepoint, Z$group))  # 1st row is 3rd row and 2nd row is 5th row
-table(Z$deviant, Z$timepoint, Z$group)  # 1st row is 4th and 6th row
+table(Z$deviant, Z$timepoint, Z$group)  # 2nd row is 4th and 6th row
 
 t(round(t(table(Z$deviant, Z$timepoint))*100/c(nrow(subset(Z, timepoint==1)),nrow(subset(Z, timepoint==2)),nrow(subset(Z, timepoint==3))),2)) # Percentages of the 2nd row
 
-round(t(table(Z$deviant, Z$timepoint, Z$group)[1,1:3,])[1,1:3]*100/t(table(Z$timepoint, Z$group))[1,1:3],2) # controls, percentages of the 4th row
+round(t(table(Z$deviant, Z$timepoint, Z$group)[2,1:3,])[1,1:3]*100/t(table(Z$timepoint, Z$group))[1,1:3],2) # controls, percentages of the 4th row
 
-round(t(table(Z$deviant, Z$timepoint, Z$group)[1,1:3,])[2,1:3]*100/t(table(Z$timepoint, Z$group))[2,1:3],2) # pats, percentages of the 6th row
+round(t(table(Z$deviant, Z$timepoint, Z$group)[2,1:3,])[2,1:3]*100/t(table(Z$timepoint, Z$group))[2,1:3],2) # pats, percentages of the 6th row
 ```
 
 The following tables represent, **in terms of samples**, the number of deviations ($|Z|>1.96$). It is calculated for each timepoint ($timepoint=1,2,3$) and differentiated between controls and subjects.
@@ -344,8 +343,11 @@ Z <- Zs_match %>%
   mutate(deviant = ifelse(z < -1.96, -1, deviant)) %>%
   mutate(deviant = ifelse(z >  1.96, 1 , deviant))
 
-t(table(Z$deviant, Z$timepoint)) # first 3x3 row-col
+t(table(Z$deviant, Z$timepoint))       # first 3x3 row-col (timepoint, dev)
+table(Z$deviant, Z$timepoint, Z$group) # first 3x3 row-col (timepoint, dev) (differentiating between pat/controls)
+
 t(table(Z$deviant==1 | Z$deviant==-1, Z$timepoint)) #2nd col is --> last column
+table(Z$deviant==1 | Z$deviant==-1, Z$timepoint, Z$group) #2nd col is --> last column (differentiating between pat/controls)
 c(t(table(Z$deviant==-1))[2],t(table(Z$deviant==0))[2], t(table(Z$deviant==1))[2], 
   t(table(Z$deviant==1 | Z$deviant==-1))[2])  #last row
 
@@ -359,14 +361,96 @@ round(t(table(Z$deviant==1 | Z$deviant==-1, Z$timepoint))*100/c(nrow(subset(Z, t
 round(c(t(table(Z$deviant==-1))[2],t(table(Z$deviant==0))[2], t(table(Z$deviant==1))[2], 
   t(table(Z$deviant==1 | Z$deviant==-1))[2])*100/sum(table(Z$deviant)),2)
 ```
+# In terms of regions deviated:
 
 |         | Infra-normal deviants|  Non deviants  | Supra-normal deviants | Deviants    |
 |---------|:--------------------:|:--------------:|:---------------------:|:-----------:|
 |  tp 1   |      339 (1.48%)     | 22.299 (97.31%)|     278 (1.21%)       |  617 (2.69%)|
+| controls|      172 ()          | 11.223 ()      |      97 ()            |  269 ()     |
+| patients|      167 ()          | 11.076 ()      |     181 ()            |  348 ()     |
 |  tp 2   |      322 (1.44%)     | 21.785 (97.67%)|     197 (0.88%)       |  519 (2.33%)|
+| controls|       83 ()          | 10.976 ()      |      93 ()            |  176 ()     |
+| patients|      239 ()          | 10.809 ()      |     104 ()            |  343 ()     |
 |  tp 3   |      133 (2.00%)     |  6.477 (97.19%)|      54 (0.81%)       |  187 (2.81%)|
+| controls|       39 ()          |  3.261 ()      |      32 ()            |   71 ()     |
+| patients|       94 ()          |  3.216 ()      |      22 ()            |  116 ()     |
 |  total  |      794 (1.53%)     | 50.561 (97.45%)|     529 (1.02%)       |1.323 (2.55%)|
 
+
+```{r message=FALSE, warning=FALSE}
+library("ggExtra") #install.packages("ggExtra")
+for (d in c("infra-dev","supra-dev")){
+ for (tp in 1:3) {
+  data <- Zs_match %>%
+    mutate(deviant = ifelse(z > -1.96 & z < 1.96, 0, z)) %>%
+    mutate(deviant = ifelse(z < -1.96, -1, deviant)) %>%
+    mutate(deviant = ifelse(z >  1.96,  1, deviant)) %>% 
+    mutate(deviant = factor(deviant, 
+                            labels = c("infra-dev","normal","supra-dev"))) %>% 
+    filter(deviant==d) %>% 
+    filter(timepoint==tp) %>% 
+    group_by(subID, group, deviant) %>%
+    dplyr::summarise(n=n()) 
+  
+  p1 <- ggplot(data = data,
+               mapping = aes(x = subID, y = n, colour = group)) +
+    geom_point() +
+    geom_smooth(method = "loess") +
+    labs(title=paste0("Timepoint ", tp, ",  ",d), 
+         x = "subject ID", 
+         y = "Number of regions deviated") +
+    theme_bw() +
+    theme(legend.position = "bottom",
+          legend.title = element_blank())
+
+  # Replace "histogram" with "boxplot" or "density" for other types
+  p2 <- ggMarginal(p1, type = "histogram", groupColour = TRUE, groupFill = TRUE)
+  print(p2, newpage = TRUE) 
+ }
+}
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+for (g in c("patient", "control")){
+  for(tp in 1:3){
+  data <- Zs_match %>%
+    filter(timepoint==tp) %>% 
+    filter(group==g) %>% 
+    mutate(deviant = ifelse(z > -1.96 & z < 1.96, 0, z)) %>%
+    mutate(deviant = ifelse(z < -1.96, -1, deviant)) %>%
+    mutate(deviant = ifelse(z >  1.96,  1, deviant)) %>%
+    filter(deviant!=0) %>% 
+    mutate(Z = factor(deviant, labels = c("infra-dev","supra-dev")),
+           subID = factor(subID))
+  
+  # Bar chart side by side
+  plot <- ggplot(data, aes(x = subID, fill = Z)) +
+    geom_bar(position = position_dodge()) + # position_dodge() o "fill"
+    labs(title=paste0(g,", timepoint ", tp), x= g , y = "n regions") + 
+    scale_fill_manual(values=c("#999999", "#E69F00")) +
+    theme_minimal() + 
+    theme(axis.text.x = element_text(size = 5, angle = 90))   
+  print(plot)
+ }
+}
+```
+
+# In terms of regions deviated:
+
+|         | Infra-normal deviants|  Non deviants  | Supra-normal deviants | Deviants    |
+|---------|:--------------------:|:--------------:|:---------------------:|:-----------:|
+|  tp 1   |          ()          |          ()    |            ()         |       ()    |
+| controls|          ()          |          ()    |            ()         |       ()    |
+| patients|          ()          |          ()    |            ()         |       ()    |
+|  tp 2   |          ()          |          ()    |            ()         |       ()    |
+| controls|          ()          |          ()    |            ()         |       ()    |
+| patients|          ()          |          ()    |            ()         |       ()    |
+|  tp 3   |          ()          |          ()    |            ()         |       ()    |
+| controls|          ()          |          ()    |            ()         |       ()    |
+| patients|          ()          |          ()    |            ()         |       ()    |
+|  total  |          ()          |          ()    |            ()         |       ()    |
 
 We computed the number of subjects that are **deviant at timepoint 1** and stay **deviant in subsequent timepoints**, for each region. A maximum of 5 subjects (1.48% of total subjects) fulfill that condition for any region.
 
@@ -631,25 +715,42 @@ img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/prevalence_ws
 grid.arrange(img1, img2, img3, ncol = 1, nrow=3)
 ```
 
-### Variance contribution across measures:
+# Variance contribution across measures
+
+## NO Match-it dataframe (longCombat):
 
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 variancePartition(df = df_lC_NO_matched,
                   measure = "CT_freesurfer",
                   lab = "lC_NO_matched_parc35",
                   par = "parc35")
+```
 
+```{r, echo=FALSE}
+img1 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp1_lC_NO_matched_parc35.png")), interpolate = FALSE)
+img2 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp2_lC_NO_matched_parc35.png")), interpolate = FALSE)
+img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp3_lC_NO_matched_parc35.png")), interpolate = FALSE)
+
+grid.arrange(img1, img2, img3, ncol = 1, nrow=3)
+```
+
+
+
+## Match-it dataframe (longCombat):
+
+```{r message=FALSE, warning=FALSE}
 variancePartition(df = df_lC_matched,
                   measure = "CT_freesurfer",
                   lab = "lC_matched_parc35",
                   par = "parc35")
 ```
 
-```{r show-png-violin, echo=FALSE}
-img1 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp1_lC_NO_matched_parc35.png")), interpolate = FALSE)
-img2 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp2_lC_NO_matched_parc35.png")), interpolate = FALSE)
-img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp3_lC_NO_matched_parc35.png")), interpolate = FALSE)
+
+```{r, echo=FALSE}
+img1 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp1_lC_matched_parc35.png")), interpolate = FALSE)
+img2 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp2_lC_matched_parc35.png")), interpolate = FALSE)
+img3 <- rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc35/violin_tp3_lC_matched_parc35.png")), interpolate = FALSE)
 
 grid.arrange(img1, img2, img3, ncol = 1, nrow=3)
 ```
