@@ -1,5 +1,5 @@
 ---
-title: "Normative modeling in Schizophrenia - Analysis of the 34 regions parcellation"
+title: "Normative modeling in Schizophrenia - Analysis"
 author: "Noemi González Lois"
 date: "`r Sys.Date()`"
 output:
@@ -14,33 +14,35 @@ knitr::opts_chunk$set(
   eval=TRUE, 
   warning=TRUE, 
   message = TRUE,
-  cache = FALSE
-)
+  cache = FALSE,
+  fig.width = 12,
+  fig.height = 8
+  )
 ```
 
 ### Packages and libraries
 
+We get a list of all the needed packages, then we load them all and also get the number of cores available in PC.
+
 ```{r, warning=F, message = F}
 
-library("easypackages") # install.packages("easypackages")
+library("easypackages")
 
-# get a list of all the needed packages
 list.of.packages <- c("viridis", "tidyverse", "MatchIt", "grid", "png", 
-                      "gridExtra", "parallel", "nlme", "JMbayes", 
-                      "BiocManager", "Biostrings", "lme4", "ggplot2", 
+                      "gridExtra", "parallel", "nlme", "JMbayes", "plyr",
+                      "BiocManager", "Biostrings", "lme4", "ggplot2", "dplyr",
                       "Hmisc", "devtools", "longCombat", "neuroCombat", 
-                      "tinytex", "knitr", "dplyr", "variancePartition",
-                      "Rmisc", "doParallel")
+                      "tinytex", "knitr", "ggExtra", "variancePartition",
+                      "Rmisc", "doParallel", "hrbrthemes", "cowplot")
 
-new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
   if(length(new.packages)>0) { install.packages(new.packages)}
 
-# load them all
 libraries(list.of.packages)
-ncores <- detectCores() # Number of cores available in pc
+ncores <- detectCores()
 rm(list.of.packages, new.packages)
 ```
-
 
 
 ```{r, eval = FALSE, include = FALSE}
@@ -68,12 +70,6 @@ source("4_EDA.R")
 
 # Data preparation
 
-Options of DataPreparation function: 
-
-* parc = "parc35" or "parc308" (whether to use the 34 regions parcellation or the 308 regions one)
-* harmonization= "lC" or "nC" (whether to use lonCombat or NeuroCombat harmonization)
-* match = T or F (whether to use match-it or not)
-
 ```{r, warning = F, message = F}
 df_lC_NO_matched <- DataPreparation(parc = "parc35",
                                     harmonization = "lC",
@@ -83,12 +79,64 @@ df_lC_matched <- DataPreparation(parc = "parc35",
                                  harmonization = "lC",
                                  match = T)
 ```
+# Exploratory Data Analysis
 
-\textcolor{red}{Warning}: Fewer control units than treated units; not all treated units will get a match.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 
-Stack Overflow: This warning is because our treated group is larger than our control group (this happens in timepoint = 2). If you're doing 1:1 matching without replacement, all the control units will be used up before all the treated units get a match. **To remedy this, you need to match with replacement or think about whether you actually want to generalize to the control population and switch the labels on the treatment groups**. You can do this by creating a new variable, say notY, which is 1 - Y and then performing the same operations.
+# NO MATCHED
+male.df        <- subset(df_lC_NO_matched, scode==0)
+male.pat.age   <- subset(male.df, dcode==1)$age
+male.con.age   <- subset(male.df, dcode==0)$age
+female.df        <- subset(df_lC_NO_matched, scode==1)
+female.pat.age   <- subset(male.df, dcode==1)$age
+female.con.age   <- subset(male.df, dcode==0)$age
 
-\textcolor{red}{The match in *sex variable* is not exact. Anyway, the match in \# patients, \# controls is done well (¿is it enough?)}
+data1 <- data.frame(
+  name=c( rep("Male pat",length(male.pat.age)), 
+          rep("Female pat",length(female.pat.age)), 
+          rep("Male hc",length(male.con.age)), 
+          rep("Female hc",length(female.con.age))),
+  value=c(male.pat.age, female.pat.age,
+          male.con.age, female.con.age))
+
+plot1 <- data1 %>%
+  ggplot( aes(x=name, y=value, fill=name)) +
+    geom_boxplot() +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    theme(legend.position="none",
+          plot.title = element_text(size=15)) +
+    ggtitle("Age distribution (NO match)") +
+    xlab("")
+
+# MATCHED
+male.df        <- subset(df_lC_matched, scode==0)
+male.pat.age   <- subset(male.df, dcode==1)$age
+male.con.age   <- subset(male.df, dcode==0)$age
+female.df        <- subset(df_lC_NO_matched, scode==1)
+female.pat.age   <- subset(male.df, dcode==1)$age
+female.con.age   <- subset(male.df, dcode==0)$age
+
+data2 <- data.frame(
+  name=c( rep("Male pat",length(male.pat.age)), 
+          rep("Female pat",length(female.pat.age)), 
+          rep("Male hc",length(male.con.age)), 
+          rep("Female hc",length(female.con.age))),
+  value=c(male.pat.age, female.pat.age,
+          male.con.age, female.con.age))
+
+plot2 <- data2 %>%
+  ggplot( aes(x=name, y=value, fill=name)) +
+    geom_boxplot() +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    theme(legend.position="none",
+          plot.title = element_text(size=15)) +
+    ggtitle("Age distribution (match)") +
+    xlab("")
+
+plot_grid(plot1, plot2, labels = "AUTO")
+```
 
 ### NO MATCHED DATASET
 
@@ -97,12 +145,10 @@ Stack Overflow: This warning is because our treated group is larger than our con
 | # controls | 298        | 293         | 109         |
 | # patients | 169        | 168         | 50          |
 
-
 | Timepoint 1| sex 0| sex 1|
 | -----------|:----:|:----:|
 | # controls | 131  | 167  |
 | # patients |  38  | 131  |
-
 
 | Timepoint 2| sex 0| sex 1|
 | -----------|:----:|:----:|
@@ -123,11 +169,7 @@ for (i in 1:3) {
 }
 ```
 
-
 ### MATCHED DATASET
-
-Number of patients vs number of controls per timepoint is not exactly the same:
-
 
 |  MATCHED   | timepoint 1| timepoint 2 | timepoint 3 |
 | -----------|:----------:|:-----------:|:-----------:|
@@ -151,6 +193,7 @@ Number of patients vs number of controls per timepoint is not exactly the same:
 | # controls |   8  | 41   |
 | # patients |   7  | 42   |
 
+
 ```{r, eval=FALSE, include=FALSE}
 
 table(df_lC_matched$dcode, df_lC_matched$timepoint)
@@ -161,23 +204,9 @@ for (i in 1:3) {
 }
 ```
 
-# Exploratory Data Analysis
-
-Show relevant figures and analytics before and after data preparation. For example, age of controls vs age of patients in the raw df vs the match-it df:
-
-## Matching ages:
-
-```{r}
-EDA_match_ages(df_lC_NO_matched,"NO match-it")
-
-EDA_match_ages(df_lC_matched,"match-it")
-```
-
 # Linear Mixed Effects Model Regresion
 
-Calling the *run_NormativeModel* function with different datasets. This will return the z scores (one for each region for each timepoint of each subject)
-
-## NO Match-it dataframe (longCombat):
+## NO Match-it
 
 ```{r}
 Zs_NOmatch <- run_NormativeModel(df_lC_NO_matched,
@@ -187,7 +216,27 @@ Zs_NOmatch <- run_NormativeModel(df_lC_NO_matched,
                                  harmonization = "lC")
 ```
 
-## Match-it dataframe (longCombat):
+```{r echo=FALSE}
+# Histogram overlaid with kernel density curve
+ggplot(Zs_NOmatch, aes(x=z)) +  
+    geom_histogram(aes(y=..density..),        # Histogram with density
+                   binwidth=.3, colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666")  + # Transparent density plot
+    geom_vline(aes(xintercept=mean(z, na.rm=T)),   # Ignore NA values for mean
+               color="red", linetype="dashed", size=0.5) +
+    labs(title="z-score distribution (NO MATCH)", 
+         x = "z-score", 
+         y = "density")
+```
+```{r echo=FALSE}
+z_mean_reg_match <- Zs_NOmatch %>%
+  group_by(region) %>%
+  dplyr::summarise(media = mean(z))
+x <- 1:length(z_mean_reg_match$media)
+plot(x, z_mean_reg_match$media, type = "l", lwd=1, xlab="region", ylab="mean z-score", main="Mean z-score per region (NO MATCH)")
+```
+
+## Match-it dataframe
 
 ```{r}
 Zs_match <- run_NormativeModel(df_lC_matched,
@@ -197,6 +246,25 @@ Zs_match <- run_NormativeModel(df_lC_matched,
                                harmonization = "lC")
 ```
 
+```{r echo=FALSE}
+# Histogram overlaid with kernel density curve
+ggplot(Zs_match, aes(x=z)) +  
+    geom_histogram(aes(y=..density..),        # Histogram with density
+                   binwidth=.3, colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666")  + # Transparent density plot
+    geom_vline(aes(xintercept=mean(z, na.rm=T)),   # Ignore NA values for mean
+               color="red", linetype="dashed", size=0.5)+
+    labs(title="z-score distribution (MATCH)", 
+         x = "z-score", 
+         y = "density")
+```
+```{r echo=FALSE}
+z_mean_reg_match <- Zs_match %>%
+  group_by(region) %>%
+  dplyr::summarise(media = mean(z))
+x <- 1:length(z_mean_reg_match$media)
+plot(x, z_mean_reg_match$media, type = "l", lwd=1, xlab="region", ylab="mean z-score", main="Mean z-score per region (MATCH)")
+```
 
 ## Match-it dataframe (Age*Diagnosis) BEFORE EXCLUDING DEVIANTS
 
@@ -289,12 +357,10 @@ hist(x3, main="p-vals (dcode_age)", col="orange")
 hist(x4, main="p-vals with FDR (dcode_age)", col="green")
 ```
 
-
 # Analysis of z-scores and computation of global scores
 
-
 ```{r eval=FALSE, include=FALSE}
-Z <- Zs_NOmatch %>% # change match / NOmatch
+Z <- Zs_match %>% # change match / NOmatch
   mutate(deviant = ifelse(z < -1.96 | z > 1.96, 1, 0))
 
 table(Z$timepoint) # 1st row
@@ -309,7 +375,7 @@ round(t(table(Z$deviant, Z$timepoint, Z$group)[2,1:3,])[1,1:3]*100/t(table(Z$tim
 round(t(table(Z$deviant, Z$timepoint, Z$group)[2,1:3,])[2,1:3]*100/t(table(Z$timepoint, Z$group))[2,1:3],2) # pats, percentages of the 6th row
 ```
 
-The following tables represent, **in terms of samples**, the number of deviations ($|Z|>1.96$). It is calculated for each timepoint ($timepoint=1,2,3$) and differentiated between controls and subjects.
+The following tables represent, **in terms of samples**, the number of deviations ($|Z|>1.96$). The number of samples refers to the total number of regions, calculated for each timepoint ($timepoint=1,2,3$) and differentiated between controls and subjects.
 
 |     NO MATCHED     | timepoint 1   | timepoint 2 | timepoint 3 |
 | ----------------   |:-----------:  |:-----------:|:-----------:|
@@ -319,7 +385,6 @@ The following tables represent, **in terms of samples**, the number of deviation
 | # controls dev  (%)|  450 (2.22%)  |  335 (1.68%)| 143 (1.93%) |
 | # patients samples |  11.424       |   11.424    |  3.332      |
 | # patients dev (%) |  345 (3.02%)  |  361 (3.16%)|  132 (3.96%)|
-
 
 
 |     MATCHED        | timepoint 1   | timepoint 2   | timepoint 3 |
@@ -360,25 +425,41 @@ round(t(table(Z$deviant==1 | Z$deviant==-1, Z$timepoint))*100/c(nrow(subset(Z, t
 # Percentages of the last row
 round(c(t(table(Z$deviant==-1))[2],t(table(Z$deviant==0))[2], t(table(Z$deviant==1))[2], 
   t(table(Z$deviant==1 | Z$deviant==-1))[2])*100/sum(table(Z$deviant)),2)
+
+
+a <- table(Z$deviant, Z$timepoint)       # first 3x3 row-col (timepoint, dev)
+b <- table(Z$deviant, Z$timepoint, Z$group) # first 3x3 row-col (timepoint, dev) (differentiating between pat/controls)
+
+round(b[ , ,1]*100/a,2)  # CONTROL
+round(b[ , ,2]*100/a,2)  # PATIENT
+
+
+# Last column:
+a<-t(table(Z$deviant==1 | Z$deviant==-1, Z$timepoint)) #2nd col is --> last column
+b<-table(Z$deviant==1 | Z$deviant==-1, Z$timepoint, Z$group) #2nd col is --> last column (differentiating between pat/controls)
+
+round(b[2,,1]*100/a[,2],2) # CONTROL
+round(b[2,,2]*100/a[,2],2) # PATIENTS
 ```
+
 # In terms of regions deviated:
 
-|         | Infra-normal deviants|  Non deviants  | Supra-normal deviants | Deviants    |
-|---------|:--------------------:|:--------------:|:---------------------:|:-----------:|
-|  tp 1   |      339 (1.48%)     | 22.299 (97.31%)|     278 (1.21%)       |  617 (2.69%)|
-| controls|      172 ()          | 11.223 ()      |      97 ()            |  269 ()     |
-| patients|      167 ()          | 11.076 ()      |     181 ()            |  348 ()     |
-|  tp 2   |      322 (1.44%)     | 21.785 (97.67%)|     197 (0.88%)       |  519 (2.33%)|
-| controls|       83 ()          | 10.976 ()      |      93 ()            |  176 ()     |
-| patients|      239 ()          | 10.809 ()      |     104 ()            |  343 ()     |
-|  tp 3   |      133 (2.00%)     |  6.477 (97.19%)|      54 (0.81%)       |  187 (2.81%)|
-| controls|       39 ()          |  3.261 ()      |      32 ()            |   71 ()     |
-| patients|       94 ()          |  3.216 ()      |      22 ()            |  116 ()     |
-|  total  |      794 (1.53%)     | 50.561 (97.45%)|     529 (1.02%)       |1.323 (2.55%)|
+|         | Infra-normal deviants|  Non deviants   | Supra-normal deviants | Deviants     |
+|---------|:--------------------:|:---------------:|:---------------------:|:------------:|
+|  tp 1   |      339 (1.48%)     | 22.299 (97.31%) |     278 (1.21%)       |  617 (2.69%) |
+| controls|      172 (50.74%)    | 11.223 (50.33%) |      97 (34.89%)      |  269 (43.60%)|
+| patients|      167 (49.26%)    | 11.076 (49.67%) |     181 (65.11%)      |  348 (56.40%)|
+|  tp 2   |      322 (1.44%)     | 21.785 (97.67%) |     197 (0.88%)       |  519 (2.33%) |
+| controls|       83 (25.78%)    | 10.976 (50.38%) |      93 (47.21%)      |  176 (33.91%)|
+| patients|      239 (74.22%)    | 10.809 (49.62%) |     104 (52.79%)      |  343 (66.09%)|
+|  tp 3   |      133 (2.00%)     |  6.477 (97.19%) |      54 (0.81%)       |  187 (2.81%) |
+| controls|       39 (29.32%)    |  3.261 (50.35%) |      32 (59.26%)      |   71 (37.97%)|
+| patients|       94 (70.68%)    |  3.216 (49.65%) |      22 (40.74%)      |  116 (62.03%)|
+|  total  |      794 (1.53%)     | 50.561 (97.45%) |     529 (1.02%)       |1.323 (2.55%) |
 
 
-```{r message=FALSE, warning=FALSE}
-library("ggExtra") #install.packages("ggExtra")
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+#library("ggExtra") #install.packages("ggExtra")
 for (d in c("infra-dev","supra-dev")){
  for (tp in 1:3) {
   data <- Zs_match %>%
@@ -411,8 +492,9 @@ for (d in c("infra-dev","supra-dev")){
 
 ```
 
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 
-```{r message=FALSE, warning=FALSE}
+# OTRO PLOT QUE POR AHORA NO MOSTRAMOS
 for (g in c("patient", "control")){
   for(tp in 1:3){
   data <- Zs_match %>%
@@ -437,21 +519,6 @@ for (g in c("patient", "control")){
 }
 ```
 
-# In terms of regions deviated:
-
-|         | Infra-normal deviants|  Non deviants  | Supra-normal deviants | Deviants    |
-|---------|:--------------------:|:--------------:|:---------------------:|:-----------:|
-|  tp 1   |          ()          |          ()    |            ()         |       ()    |
-| controls|          ()          |          ()    |            ()         |       ()    |
-| patients|          ()          |          ()    |            ()         |       ()    |
-|  tp 2   |          ()          |          ()    |            ()         |       ()    |
-| controls|          ()          |          ()    |            ()         |       ()    |
-| patients|          ()          |          ()    |            ()         |       ()    |
-|  tp 3   |          ()          |          ()    |            ()         |       ()    |
-| controls|          ()          |          ()    |            ()         |       ()    |
-| patients|          ()          |          ()    |            ()         |       ()    |
-|  total  |          ()          |          ()    |            ()         |       ()    |
-
 We computed the number of subjects that are **deviant at timepoint 1** and stay **deviant in subsequent timepoints**, for each region. A maximum of 5 subjects (1.48% of total subjects) fulfill that condition for any region.
 
 ```{r, message=FALSE, warning=FALSE, eval=FALSE, include=FALSE}
@@ -459,23 +526,22 @@ Z <- Zs_match %>%
   mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
   group_by(region, subID) %>%
   dplyr::summarise(mul = prod(dev)) %>% # Multiplicamos los dev de todos los tp de cada subject por cada región
-  group_by(region) %>%           # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  group_by(region) %>%                  # Así, sólo valen distinto de 0 los que tienen todos los tp=1
   dplyr::summarise(sol = sum(mul)) %>%
-  arrange(desc(sol))
+  dplyr::arrange(desc(sol))
 
-round(Z[1,2]*100/length(unique(Zs_match$subID)),2) # Percentage in the text
+round(Z[1:3,2]*100/length(unique(Zs_match$subID)),2) # Percentage in the text
 head(Z,3)
-
 ```
 
 |                                     | Condition|
 |-------------------------------------|:--------:|
-|rh_cuneus_CT_freesurfer              |    5     |
-|lh_rostralmiddlefrontal_CT_freesurfer|    4     |
-|lh_temporalpole_CT_freesurfer        |    4     |
+|rh_cuneus_CT_freesurfer              | 5 (1.48%)|
+|lh_rostralmiddlefrontal_CT_freesurfer| 4 (1.19%)|
+|lh_temporalpole_CT_freesurfer        | 4 (1.19%)|
 
 
-We computed the number of subjects that are **not deviant at timepoint 1** but become **deviant in subsequent timepoints**, for each region.  A maximum of 20 subjects (5.93% of total subjects) fulfill that condition for any region.
+We computed the number of subjects that are **not deviant at timepoint 1** but become **deviant in subsequent timepoints**, for each region. A maximum of 20 subjects (5.93% of total subjects) fulfill that condition for any region.
 
 
 ```{r, message=FALSE, warning=FALSE, eval=FALSE, include=FALSE}
@@ -488,17 +554,17 @@ Z <- Zs_match %>%
   dplyr::summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
   group_by(region) %>%            # Así, sólo valen 1 los que tienen todos los tp=1
   dplyr::summarise(sol = sum(mul)) %>%
-  arrange(desc(sol))
+  dplyr::arrange(desc(sol))
 
-round(Z[1,2]*100/length(unique(Zs_match$subID)),2) # Percentage in the text
+round(Z[1:3,2]*100/length(unique(Zs_match$subID)),2) # Percentage in the text
 head(Z,3)
 ```
 
 |                                       | Condition|
 |---------------------------------------|:--------:|
-|lh_lateraloccipital_CT_freesurfer      |   20     |
-|rh_temporalpole_CT_freesurfer          |   18     |
-|lh_posteriorcingulate_CT_freesurfer    |   18     |
+|lh_lateraloccipital_CT_freesurfer      |20 (5.93%)|
+|rh_temporalpole_CT_freesurfer          |20 (5.93%)|
+|lh_posteriorcingulate_CT_freesurfer    |18 (5.34%)|
 
 
 ***
@@ -524,7 +590,7 @@ for (tp in 1:3){ # for each timepoint
     dplyr::summarise(nreg_dev = sum(dev==1),
               nreg_nondev = sum(dev==0))%>%
     mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),3)) %>%
-    arrange(desc(perc_dev))
+    dplyr::arrange(desc(perc_dev))
   # head(Z,3)
   perc <- as.numeric(Z[1,"perc_dev"])
   cat("Timepoint", tp,":", perc,"%\n")
@@ -541,7 +607,6 @@ for (tp in 1:3){ # for each timepoint
 
 + Timepoint 3: Infra-normal deviations in CT of subjects were most commonly located in **lh_fusiform_CT_freesurfer** cortices, although only 8.163% of patients showed significant deviations in these regions.
 
-\textcolor{red}{DUDA: sacar la región y su porcentaje en los pacientes? Lo que hice fue sacar la región de los sujetos y el porcentaje para esa región concreta en los pacientes.}
 
 ```{r, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 # For 2

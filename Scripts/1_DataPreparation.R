@@ -1,17 +1,21 @@
 DataPreparation <- function(parc, harmonization, match){
   
-  if (parc == "parc35"){ 
+  # parc = "parc68"
+  # harmonization = "lC"
+  # match = T
+  
+  if (parc == "parc68"){ 
     measure = "CT_freesurfer"
     
-    if (!file.exists(paste0("/data_J/Data/parc35/",parc,".csv"))){
-      cat("File parc35 doesn't exist, creating...\n") # Borrar
+    if (!file.exists(paste0("/data_J/Data/parc68/",parc,".csv"))){
+      cat("File parc68 doesn't exist, creating...\n") # Borrar
       df_lh   <- read.csv("/data_J/Data/lh.aparc.thickness.csv")[,1:35]
       df_rh   <- read.csv("/data_J/Data/rh.aparc.thickness.csv")[,1:35]
       df_parc <- merge(df_lh, df_rh, by="ID", all.x=T)
       
       df_morphosim <- read.csv("/data_J/Data/planU_morphosim_rawdatabase.csv")
-      df_euler <- read.csv("/data_J/Data/planU_euler.csv")
-      temp <- as.vector(df_euler[,3])
+      df_euler     <- read.csv("/data_J/Data/planU_euler.csv")
+      temp   <- as.vector(df_euler[, 3])
       df_euler[,3] <- impute(temp, fun=median)
       df_raw <- merge(df_morphosim, df_euler, by="ID", all.x=T)
       df_raw <- df_raw[, c("age", "scode", "dcode", "acode", "timepoint",
@@ -24,15 +28,15 @@ DataPreparation <- function(parc, harmonization, match){
       df <- transform(df, dcode_age=dcode*age)         # Create dcode_age variable
       df <- df[order(df$age), ]                        # Sort by age (not sure why)
       
-      write.csv(df,paste0("/data_J/Data/parc35/",parc,".csv"), row.names = FALSE)
+      write.csv(df,paste0("/data_J/Data/parc68/",parc,".csv"), row.names = FALSE)
     }
-    else if (file.exists(paste0("/data_J/Data/parc35/",parc,".csv"))){
-      cat("File parc35 already exists, reading file...\n") # Borrar
-      df <- read.csv(paste0("/data_J/Data/parc35/",parc,".csv"))
+    else if (file.exists(paste0("/data_J/Data/parc68/",parc,".csv"))){
+      cat("File parc68 already exists, reading file...\n") # Borrar
+      df <- read.csv(paste0("/data_J/Data/parc68/",parc,".csv"))
     }
   }
   
-  else if (parc == "parc308"){
+  if (parc == "parc308"){
     measure = "thickness"
     if (!file.exists(paste0("/data_J/Data/parc308/",parc,".csv"))){ 
       cat("File parc308 doesn't exist, creating....\n") # Borrar
@@ -66,6 +70,10 @@ DataPreparation <- function(parc, harmonization, match){
     if (!file.exists(paste0("/data_J/Data/", parc,"/",parc,"_lC_harmonized.csv"))){
       cat("File with longCombat harmonization doesn't exist, creating...\n") # Borrar
       
+      # Formula: character string representing all fixed effects on the
+      #          right side of the formula for the lme model.
+      #          Should NOT include batchvar (acode) and should NOT include random effects.
+      
       formula = 'age + scode + dcode*timepoint'
       ranef = '(1|subID)'
       feat_names <- colnames(df%>%select(ends_with(measure)))
@@ -97,7 +105,7 @@ DataPreparation <- function(parc, harmonization, match){
     }
   } 
   
-  else if (harmonization=="nC"){ 
+  if (harmonization=="nC"){ 
     if (!file.exists(paste0("/data_J/Data/", parc,"/",parc,"_nC_harmonized.csv"))){
       cat("File with neuroCombat harmonization doesn't exist, creating...\n") # Borrar
       
@@ -146,7 +154,7 @@ DataPreparation <- function(parc, harmonization, match){
       df_bl  <- df[which(df$timepoint==1), ] 
       
       temp1  <- df_bl[ , c("ID","age","scode","euler","dcode")] # samples to match
-      temp2 <- matchit(dcode ~ age+scode, data=temp1)    # matching
+      temp2 <- matchit(dcode ~ age+scode, data=temp1)    # matching method by default: nearest neighbor
       temp3 <- match.data(temp2)[1:ncol(temp1)]          # matched sample
 
       df_bl_matched  <- subset(df_bl,  ID %in% temp3$ID) # extracting matched sample for baseline
