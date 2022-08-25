@@ -1,157 +1,162 @@
-Regression_NormativeModel <- function(i, df, measure){
-  # df <- df_lC_NO_matched
-  # measure = "CT_freesurfer"
-  # parc = "parc68"
-  # match = "NOmatch"
-  # harmonization = "lC"
-  # i=1
-  # sub = 100
-  # tp = 1
-  
-  df_Z <- df_Z1 <- df_Z2 <- NULL
-  
-  # Select data
-  reg_names  <- colnames(df%>%select(ends_with(measure)))
-  idx_pat    <- which(df$dcode== 1)  # 1: patient
-  idx_hc     <- which(df$dcode== 0)  # 0: healthy control
-  data_pat   <- df[idx_pat, ]        # Select rows corresponding to patients
-  data_hc    <- df[idx_hc,  ]        # Select rows corresponding to healthy controls
-  pat_subIDs <- unique(data_pat$subID)   # Get unique subIDs from patients
+##########  old ############
+# Regression_NormativeModel <- function(i, df, measure){
+#   # df <- df_lC_NO_matched
+#   # measure = "CT_freesurfer"
+#   # parc = "parc68"
+#   # match = "NOmatch"
+#   # harmonization = "lC"
+#   # i=1
+#   # sub = 100
+#   # tp = 1
+#   
+#   df_Z <- df_Z1 <- df_Z2 <- NULL
+#   
+#   # Select data
+#   reg_names  <- colnames(df%>%select(ends_with(measure)))
+#   idx_pat    <- which(df$dcode== 1)  # 1: patient
+#   idx_hc     <- which(df$dcode== 0)  # 0: healthy control
+#   data_pat   <- df[idx_pat, ]        # Select rows corresponding to patients
+#   data_hc    <- df[idx_hc,  ]        # Select rows corresponding to healthy controls
+#   pat_subIDs <- unique(data_pat$subID)   # Get unique subIDs from patients
+# 
+#   var_names <- c("age", "scode", "subID", "euler", "timepoint")
+#   data_pat <- data_pat[, c(reg_names[i], var_names)]
+#   data_hc  <- data_hc[ , c(reg_names[i], var_names)]
+#   colnames(data_pat) <- c("reg", var_names)
+#   colnames(data_hc)  <- c("reg", var_names)
+#   
+#   # NORMATIVE MODEL
+#   model <- lme(as.formula("reg ~ scode + age + euler"), random = ~1 + age|subID,
+#               data = data_hc, control=lmeControl(opt='optim', msMaxIter=200),
+#               method='REML')
+#   
+#   # PREDICTED VALUES FOR CONTROLS
+#   predictions <- predict(model, data_hc, na.action = na.omit, interval = "confidence")
+#   
+#   # COMPUTE Zs FOR CONTROLS
+#   for (hc in 1:nrow(data_hc)){
+#     # hc = 1
+#     Z_hc <- (data_hc$reg[hc] - predictions[hc]) / model$sigma
+#     df_Z1 <- rbind(df_Z1, data.frame("region" = reg_names[i],
+#                                      "subID"  = data_hc$subID[hc],
+#                                      "timepoint" = data_hc$timepoint[hc],
+#                                      "z"     = Z_hc,
+#                                      "group" = 'control'))
+#   }
+# 
+#   # DYNAMIC PREDICTIONS FOR PATIENTS
+#   pat_subIDs <- pat_subIDs[pat_subIDs!=949] # This patient gives problems when computing IndvPred (we delete it for now)
+#   for (sub in pat_subIDs){
+#     data_sub <- subset(data_pat, subID == sub)
+#     prediction_sub <- IndvPred_lme(model, newdata = data_sub, 
+#                                    all_times = F, timeVar = "age", 
+#                                    M = 500, return_data = T)
+#     # COMPUTE Zs FOR PATIENTS
+#     n_tp <- nrow(data_sub)
+#     for (tp in 1:n_tp){
+#       Z  <- (data_sub[tp,1] - prediction_sub$pred[tp]) / model$sigma
+#       df_Z2 <- rbind(df_Z2, data.frame("region" = reg_names[i], 
+#                                        "subID"  = sub, 
+#                                        "timepoint" = tp, 
+#                                        "z"    = Z,
+#                                        "group"='patient'))
+#     }
+#   }
+#   df_Z <- rbind(df_Z1, df_Z2)
+#   return(df_Z)
+# }
+# 
+# run_NormativeModel <- function(df, measure, parc, match, harmonization){
+#   # df = df_lC_NO_matched
+#   # measure = "CT_freesurfer"
+#   # parc = "parc68"
+#   # match = "NOmatch"
+#   # harmonization = "lC"
+# 
+#   filepath = paste0("/data_J/Results/Files/",parc,"/")
+#   filename = paste0("Zs_",harmonization,"_",match,"_",parc,".csv")
+#   
+#   if (file.exists(paste0(filepath,filename))){
+#     df_Z <- read.csv(paste0(filepath, filename), header = T)
+#   }
+#   
+#   else if (!file.exists(paste0(filepath,filename))){
+#     n <- length(colnames(df%>%select(ends_with(measure))))
+#     
+#     df_Z <- do.call(rbind, mclapply(1:n, Regression_NormativeModel,
+#                                     df, measure,
+#                                     mc.cores = ncores-1))
+#     
+#     write.csv(df_Z, paste0(filepath, filename), row.names = FALSE)
+#   }
+#   return(df_Z)
+# }
 
-  var_names <- c("age", "scode", "subID", "euler", "timepoint")
-  data_pat <- data_pat[, c(reg_names[i], var_names)]
-  data_hc  <- data_hc[ , c(reg_names[i], var_names)]
-  colnames(data_pat) <- c("reg", var_names)
-  colnames(data_hc)  <- c("reg", var_names)
-  
-  # NORMATIVE MODEL
-  model <- lme(as.formula("reg ~ scode + age + euler"), random = ~1 + age|subID,
-              data = data_hc, control=lmeControl(opt='optim', msMaxIter=200),
-              method='REML')
-  
-  # PREDICTED VALUES FOR CONTROLS
-  predictions <- predict(model, data_hc, na.action = na.omit, interval = "confidence")
-  
-  # COMPUTE Zs FOR CONTROLS
-  for (hc in 1:nrow(data_hc)){
-    # hc = 1
-    Z_hc <- (data_hc$reg[hc] - predictions[hc]) / model$sigma
-    df_Z1 <- rbind(df_Z1, data.frame("region" = reg_names[i],
-                                     "subID"  = data_hc$subID[hc],
-                                     "timepoint" = data_hc$timepoint[hc],
-                                     "z"     = Z_hc,
-                                     "group" = 'control'))
-  }
+######### dcode*age + Cohen's d ########
 
-  # DYNAMIC PREDICTIONS FOR PATIENTS
-  pat_subIDs <- pat_subIDs[pat_subIDs!=949] # This patient gives problems when computing IndvPred (we delete it for now)
-  for (sub in pat_subIDs){
-    data_sub <- subset(data_pat, subID == sub)
-    prediction_sub <- IndvPred_lme(model, newdata = data_sub, 
-                                   all_times = F, timeVar = "age", 
-                                   M = 500, return_data = T)
-    # COMPUTE Zs FOR PATIENTS
-    n_tp <- nrow(data_sub)
-    for (tp in 1:n_tp){
-      Z  <- (data_sub[tp,1] - prediction_sub$pred[tp]) / model$sigma
-      df_Z2 <- rbind(df_Z2, data.frame("region" = reg_names[i], 
-                                       "subID"  = sub, 
-                                       "timepoint" = tp, 
-                                       "z"    = Z,
-                                       "group"='patient'))
-    }
-  }
-  df_Z <- rbind(df_Z1, df_Z2)
-  return(df_Z)
-}
 
-run_NormativeModel <- function(df, measure, parc, match, harmonization){
-  # df = df_lC_NO_matched
-  # measure = "CT_freesurfer"
-  # parc = "parc68"
-  # match = "NOmatch"
-  # harmonization = "lC"
-
-  filepath = paste0("/data_J/Results/Files/",parc,"/")
-  filename = paste0("Zs_",harmonization,"_",match,"_",parc,".csv")
-  
-  if (file.exists(paste0(filepath,filename))){
-    df_Z <- read.csv(paste0(filepath, filename), header = T)
-  }
-  
-  else if (!file.exists(paste0(filepath,filename))){
-    n <- length(colnames(df%>%select(ends_with(measure))))
-    
-    df_Z <- do.call(rbind, mclapply(1:n, Regression_NormativeModel,
-                                    df, measure,
-                                    mc.cores = ncores-1))
-    
-    write.csv(df_Z, paste0(filepath, filename), row.names = FALSE)
-  }
-  return(df_Z)
-}
-
-RegressionModel_AgeDiagnosis <- function(i, df, Z, measure, exclude_deviants){
-  
-  pval <- NULL
-  var_names  <- c("age", "scode", "subID", "euler", "dcode", "dcode_age")
-  reg_names  <- colnames(df%>%select(ends_with(measure)))
-  
-  if (!exclude_deviants){ # NOT EXCLUDING DEVIANTS
-    data_hc_pat <- df[, c(reg_names[i], var_names)]
-    colnames(data_hc_pat) <- c("reg", var_names)
-    
-    model <- lme(as.formula("reg ~ scode + age + euler + dcode + dcode_age"), 
-                 random = ~ 1 + age|subID, data = data_hc_pat,
-                 control= lmeControl(opt='optim', msMaxIter=150), 
-                 method = 'REML')
-    pval <- anova(model)$p 
-  }
-  else if (exclude_deviants){ # EXCLUDING DEVIANTS
-    subIDs <- Z$subID[Z$region==reg_names[i]] # (x subIDs)/467
-    data_nondev <- df %>% 
-      select(reg_names[i], age, scode, subID, euler, dcode, dcode_age) %>% 
-      filter(subID %in% subIDs)
-
-    colnames(data_nondev) <- c("reg", var_names)
-    
-    model <- lme(as.formula("reg ~ scode + age + euler + dcode + dcode_age"),
-                random = ~1 + age|subID, data = data_nondev,
-                control=lmeControl(opt='optim', msMaxIter=150), method='REML')
-    pval <- anova(model)$p
-  }
-  
-  return(pval)
-}
-
-run_AgeDiagnosisModel <- function(df, measure, Z_dev, exclude_deviants){
-
-  # df <- df_lC_matched
-  # measure <- "CT_freesurfer"
-  # Z_dev <- Zs_match
-  n <- length(colnames(df %>% select(ends_with(measure))))
-
-  if (exclude_deviants){ # EXCLUDING DEVIANTS
-    Z_nondev <- Z_dev %>%
-      mutate(dev = ifelse(z < -1.96 | z > 1.96, 1, 0)) %>%
-      filter(dev==0) # Filter the subjects that are not deviates
-  }
-  else if (!exclude_deviants){ # NOT EXCLUDING DEVIANTS
-    Z_nondev <- Z_dev
-  }
-
-  p_val <- do.call(rbind, mclapply(1:n,
-                                   RegressionModel_AgeDiagnosis,
-                                   df = df,
-                                   Z = Z_nondev,
-                                   measure = measure,
-                                   exclude_deviants = exclude_deviants,
-                                   mc.cores = ncores-1))
-
- colnames(p_val) <- c("reg", "scode", "age", "euler", "dcode", "dcode_age")
-
-  return(p_val)
-}
+# RegressionModel_AgeDiagnosis <- function(i, df, Z, measure, exclude_deviants){
+#   
+#   pval <- NULL
+#   var_names  <- c("age", "scode", "subID", "euler", "dcode", "dcode_age")
+#   reg_names  <- colnames(df%>%select(ends_with(measure)))
+#   
+#   if (!exclude_deviants){ # NOT EXCLUDING DEVIANTS
+#     data_hc_pat <- df[, c(var_names,reg_names[i])]
+#     colnames(data_hc_pat) <- c(var_names, "reg")
+#     
+#     model <- lme(as.formula("reg ~ scode + age + euler + dcode + dcode_age"), 
+#                  random = ~ 1 + age|subID, data = data_hc_pat,
+#                  control= lmeControl(opt='optim', msMaxIter=150), 
+#                  method = 'REML')
+#     pval <- anova(model)$p 
+#   }
+#   else if (exclude_deviants){ # EXCLUDING DEVIANTS
+#     subIDs <- Z$subID[Z$region==reg_names[i]] # (x subIDs)/467
+#     data_nondev <- df %>% 
+#       select(reg_names[i], age, scode, subID, euler, dcode, dcode_age) %>% 
+#       filter(subID %in% subIDs)
+# 
+#     colnames(data_nondev) <- c("reg", var_names)
+#     
+#     model <- lme(as.formula("reg ~ scode + age + euler + dcode + dcode_age"),
+#                 random = ~1 + age|subID, data = data_nondev,
+#                 control=lmeControl(opt='optim', msMaxIter=150), method='REML')
+#     pval <- anova(model)$p
+#   }
+#   # Añadir un tercer modelo que sólo incluya dcode para aquellas regiones 
+#   # en las que la variable dcode_age no es significativa
+#   return(pval)
+# }
+# 
+# run_AgeDiagnosisModel <- function(df, measure, Z_dev, exclude_deviants){
+# 
+#   # df <- df_lC_matched
+#   # measure <- "CT_freesurfer"
+#   # Z_dev <- Zs_match
+#   n <- length(colnames(df %>% select(ends_with(measure))))
+# 
+#   if (exclude_deviants){ # EXCLUDING DEVIANTS
+#     Z_nondev <- Z_dev %>%
+#       mutate(dev = ifelse(z < -1.96 | z > 1.96, 1, 0)) %>%
+#       filter(dev==0) # Filter the subjects that are not deviates
+#   }
+#   else if (!exclude_deviants){ # NOT EXCLUDING DEVIANTS
+#     Z_nondev <- Z_dev
+#   }
+# 
+#   p_val <- do.call(rbind, mclapply(1:n,
+#                                    RegressionModel_AgeDiagnosis,
+#                                    df = df,
+#                                    Z = Z_nondev,
+#                                    measure = measure,
+#                                    exclude_deviants = exclude_deviants,
+#                                    mc.cores = ncores-1))
+# 
+#  colnames(p_val) <- c("reg", "scode", "age", "euler", "dcode", "dcode_age")
+# 
+#   return(p_val)
+# }
 
 FDR_correction_pval <- function(i, p_values){
   p_values_fdr <- p.adjust(p_values[,i], method='fdr') 
@@ -169,7 +174,8 @@ Apply_FDR_Correction <- function(p_val){
 
 
 
-# PRUEBAS PARA COHENS'D
+
+#### PRUEBAS PARA COHENS'D ######
 
 Regression_NormativeModel_Cohensd <- function(i, df, measure){
   # df <- df_lC_matched_308
@@ -180,8 +186,6 @@ Regression_NormativeModel_Cohensd <- function(i, df, measure){
   # i=1
   # sub = 100
   # tp = 1
-  
-  df_Z <- df_Z1 <- df_Z2 <- NULL
   
   # Select data
   reg_names  <- colnames(df%>%select(ends_with(measure)))
@@ -231,4 +235,197 @@ run_NormativeModel_Cohensd <- function(df, measure, parc, match, harmonization){
   return(df_d)
 }
 
+########### Pruebas lme con train-test #############
 
+NormativeModel <- function(i, df, measure){
+  # measure = "CT_freesurfer" # coment
+  # i=31 # coment
+  # df = DataPreparation(parc = "parc68",
+  #                      harmonization = "lC",
+  #                      match = F) # coment
+
+  # Select data
+  split <- train_test_split_f(df, 
+                              perc = 0.9)
+  df_train <- split[[1]]
+  df_test  <- split[[2]]
+  df_pat   <- split[[3]]
+  
+  reg_name  <- colnames(df%>%dplyr::select(ends_with(measure)))
+  # cat("Noemi", reg_name[i], i, "\n") # Borrar
+  var_names <- c("age", "scode", "subID", "euler", "timepoint")
+  df_train  <- df_train[, c(reg_name[i], var_names)]
+  df_test   <- df_test[,  c(reg_name[i], var_names)]
+  df_pat    <- df_pat[,   c(reg_name[i], var_names)]
+  
+  colnames(df_train) <- c("reg", var_names)
+  colnames(df_test)  <- c("reg", var_names)
+  colnames(df_pat)   <- c("reg", var_names)
+  
+  df_Z <- NULL
+  
+  # NORMATIVE MODEL
+  model <- lme(as.formula("reg ~ scode + age + euler"), random = ~1 + age|subID,
+               data = df_train, control=lmeControl(opt='optim', msMaxIter=300),
+               method='REML')
+  
+  # PREDICTED VALUES FOR TRAIN CONTROLS
+  predictions <- predict(model, df_train, na.action = na.omit, interval = "confidence")
+  
+  # COMPUTE Zs FOR TRAIN CONTROLS
+  for (hc in 1:nrow(df_train)){
+    # hc = 1
+    Z <- (df_train$reg[hc] - predictions[hc]) / model$sigma
+    df_Z <- rbind(df_Z, data.frame("region" = reg_name[i],
+                                     "subID"  = df_train$subID[hc],
+                                     "timepoint" = df_train$timepoint[hc],
+                                     "z"     = Z,
+                                     "group" = 'train_control',
+                                     "sigma" = model$sigma))
+  }
+  
+  # DYNAMIC PREDICTIONS FOR TEST CONTROLS
+  test_subIDs <- unique(df_test$subID)   # Get unique subIDs from test controls
+  test_subIDs <- test_subIDs[test_subIDs!=655] # This control gives problems when computing IndvPred (we delete it for now)
+  test_subIDs <- test_subIDs[test_subIDs!=567] # This control gives problems when computing IndvPred (we delete it for now)
+  
+  for (sub in test_subIDs){
+    # sub=14
+    data_sub <- subset(df_test, subID == sub)
+    prediction_sub <- IndvPred_lme(model, newdata = data_sub, 
+                                   all_times = F, timeVar = "age", 
+                                   M = 500, return_data = T)
+    # COMPUTE Zs FOR TEST CONTROLS
+    n_tp <- nrow(data_sub)
+    for (tp in 1:n_tp){
+      # tp=2
+      Z  <- (data_sub[tp,1] - prediction_sub$pred[tp]) / model$sigma
+      df_Z <- rbind(df_Z, data.frame("region"   = reg_name[i], 
+                                       "subID"  = sub, 
+                                       "timepoint" = tp, 
+                                       "z"    = Z,
+                                       "group"='test_control',
+                                       "sigma" = model$sigma))
+    }
+  }
+  
+  # DYNAMIC PREDICTIONS FOR PATIENTS
+  pat_subIDs <- unique(df_pat$subID)   # Get unique subIDs from patients
+  pat_subIDs <- pat_subIDs[pat_subIDs!=949] # This patient gives problems when computing IndvPred (we delete it for now)
+  for (sub in pat_subIDs){
+    # cat(sub, "\n") # borrar
+    data_sub <- subset(df_pat, subID == sub)
+    prediction_sub <- IndvPred_lme(model, newdata = data_sub, 
+                                   all_times = F, timeVar = "age", 
+                                   M = 500, return_data = T)
+    # COMPUTE Zs FOR PATIENTS
+    n_tp <- nrow(data_sub)
+    for (tp in 1:n_tp){
+      Z  <- (data_sub[tp,1] - prediction_sub$pred[tp]) / model$sigma
+      df_Z <- rbind(df_Z, data.frame("region" = reg_name[i], 
+                                       "subID"  = sub, 
+                                       "timepoint" = tp, 
+                                       "z"    = Z,
+                                       "group"='test_patient',
+                                       "sigma" = model$sigma))
+    }
+  }
+  return(df_Z)
+  #return(list(df_Z, model$sigma))
+}
+
+run_NormativeModel <- function(df, measure, parc, match, harmonization){
+  # df = DataPreparation(parc = "parc68",
+  #                      harmonization = "lC",
+  #                      match = T) # coment
+  # df = df_lC_NO_matched_68
+  # measure = "CT_freesurfer"
+  # parc = "parc68"
+  # match = "NOmatch"
+  # harmonization = "lC"
+  
+  filepath = paste0("/data_J/Results/Files/",parc,"/")
+  filename = paste0("Zs_",harmonization,"_",match,"_",parc,".csv")
+  
+  if (file.exists(paste0(filepath,filename))){
+    df_Zs <- read.csv(paste0(filepath, filename), header = T)
+  }
+  
+  else if (!file.exists(paste0(filepath,filename))){
+    n <- length(colnames(df%>%select(ends_with(measure))))
+
+    # df_Zs <- do.call(rbind, lapply(1:n, NormativeModel,
+    #                                 df, measure))
+    
+    df_Zs <- do.call(rbind, mclapply(1:n, NormativeModel,
+                                     df, measure,
+                                     mc.cores = ncores-1))
+    write.csv(df_Zs, paste0(filepath, filename), row.names = FALSE)
+  }
+  return(df_Zs)
+}
+
+##############prueba#################
+
+RegressionModel_AgeDiagnosis <- function(i, df, Z, measure, exclude_deviants){
+  
+  pval <- NULL
+  var_names  <- c("age", "scode", "subID", "euler", "dcode", "dcode_age")
+  reg_names  <- colnames(df%>%select(ends_with(measure)))
+  
+  if (!exclude_deviants){ # NOT EXCLUDING DEVIANTS
+    data_hc_pat <- df[, c(var_names, reg_names[i])]
+    colnames(data_hc_pat) <- c(var_names, "reg")
+    
+    model <- lme(as.formula("reg ~ scode + age + euler + dcode + dcode_age"), 
+                 random = ~ 1 + age|subID, data = data_hc_pat,
+                 control= lmeControl(opt='optim', msMaxIter=150), 
+                 method = 'REML')
+    pval <- anova(model)$p 
+  }
+  else if (exclude_deviants){ # EXCLUDING DEVIANTS
+    subIDs <- Z$subID[Z$region==reg_names[i]] # (x subIDs)/467
+    data_nondev <- df %>% 
+      select(reg_names[i], age, scode, subID, euler, dcode, dcode_age) %>% 
+      filter(subID %in% subIDs)
+    
+    colnames(data_nondev) <- c("reg", var_names)
+    
+    model <- lme(as.formula("reg ~ scode + age + euler + dcode + dcode_age"),
+                 random = ~1 + age|subID, data = data_nondev,
+                 control=lmeControl(opt='optim', msMaxIter=150), method='REML')
+    pval <- anova(model)$p
+  }
+  # Añadir un tercer modelo que sólo incluya dcode para aquellas regiones 
+  # en las que la variable dcode_age no es significativa
+  return(pval)
+}
+
+run_AgeDiagnosisModel <- function(df, measure, Z_dev, exclude_deviants){
+  
+  # df <- df_lC_matched
+  # measure <- "CT_freesurfer"
+  # Z_dev <- Zs_match
+  n <- length(colnames(df %>% select(ends_with(measure))))
+  
+  if (exclude_deviants){ # EXCLUDING DEVIANTS
+    Z_nondev <- Z_dev %>%
+      mutate(dev = ifelse(z < -1.96 | z > 1.96, 1, 0)) %>%
+      filter(dev==0) # Filter the subjects that are not deviates
+  }
+  else if (!exclude_deviants){ # NOT EXCLUDING DEVIANTS
+    Z_nondev <- Z_dev
+  }
+  
+  p_val <- do.call(rbind, mclapply(1:n,
+                                   RegressionModel_AgeDiagnosis,
+                                   df = df,
+                                   Z = Z_nondev,
+                                   measure = measure,
+                                   exclude_deviants = exclude_deviants,
+                                   mc.cores = ncores-1))
+  
+  colnames(p_val) <- c("reg", "scode", "age", "euler", "dcode", "dcode_age")
+  
+  return(p_val)
+}

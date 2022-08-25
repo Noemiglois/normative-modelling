@@ -1,20 +1,28 @@
 getStatistics <- function(Zs, lab, parc){
+  # Zs <- Zs_match_68 # borrar
+  # tp <- 2 # borrar
   pcol <- viridis(1)
   n_tp <- unique(Zs$timepoint)
 
   for (tp in n_tp){
     dataf <- Zs %>% 
-      filter(timepoint==tp)%>%
-      group_by(region, timepoint)%>%
+      dplyr::filter(timepoint==tp)%>%
+      dplyr::group_by(region, timepoint)%>%
       dplyr::summarise(num = sum(abs(z)>1.96), den = sum(abs(z)<1.96)) %>%
-      dplyr::summarise(region=region, ratio = num/den)
-    
-    prev <- ggplot(dataf, aes(ratio, fill = pcol)) + 
-      geom_density(alpha = 0.8) + theme_minimal() +
-      xlab("Percentage of subjects with atypical w-score") + 
+      dplyr::summarise(region=region, ratio = 100*num/den)
+    dataf$ratio <- as.numeric(dataf$ratio)
+
+    prev <- ggplot(dataf, aes(x=ratio, fill = pcol)) + 
+      geom_density(alpha = 0.8) + 
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            legend.position="none",
+            plot.title = element_text(size=15)) +
+      xlab("Percentage of subjects with atypical z-score") + 
       ylab("number of \n brain regions") +
-      ggtitle(paste0("Median prevalence: ", round(median(dataf$ratio),3), ' (Timepoint ',tp,')')) +
-      theme(legend.position = 'none')
+      ggtitle(paste0("Median prevalence: ", round(median(dataf$ratio),3), ' (Timepoint ',tp,')'))
     
     # Save as png
     png(file=paste0("/data_J/Results/Plots/", parc,"/prevalence_wscores_",tp,"_", lab,".png"), width=10, height=2.5, units="in",res=600)
@@ -68,4 +76,60 @@ getStatistics <- function(Zs, lab, parc){
                 row.names = FALSE,
                 col.names = FALSE)
   }
+}
+
+pdf_plot <- function(Z, lab, par){
+  # Histogram overlaid with kernel density curve
+  for (g in unique(Z$group)){
+    Zg <- subset(Z, group==g)
+    pdf <- ggplot(Zg, aes(x=z)) +
+      geom_histogram(aes(y=..density..),        # Histogram with density
+                     binwidth=.3, colour="black", fill="white") +
+      geom_density(alpha=.2, fill="#FF6666")  + # Transparent density plot
+      geom_vline(aes(xintercept=mean(z, na.rm=T)),   # Ignore NA values for mean
+                 color="red", linetype="dashed", size=0.5) +
+      labs(title = paste0(g),
+           x = "z-score",
+           y = "density") +
+      theme(plot.title = element_text(size=22)) +
+      xlim(-5, 5)
+    
+    
+    # Save as png
+    png(file=paste0("/data_J/Results/Plots/",par,"/pdf_",g,"_",lab,".png"),
+        width=10, height=5, units="in", res=300)
+    print(pdf)
+    dev.off()
+  }
+}
+
+
+mean_Z_across_regions_plot <- function(Z, par, lab){
+  for (g in unique(Z$group)){
+    Zg <- subset(Z, group==g)
+    z_mean_reg_match <- Zg %>%
+      group_by(region) %>%
+      dplyr::summarise(media = mean(z))
+    x <- 1:length(z_mean_reg_match$media)
+    means_plot <- plot(x, z_mean_reg_match$media, type = "l", lwd=1, 
+                       xlab="region", ylab="mean z-score", 
+                       main="Mean z-score per region (NO MATCH)")
+    
+    # Save as png
+    png(file=paste0("/data_J/Results/Plots/",par,"/mean_Z_",g,"_",lab,".png"), 
+        width=5, height=10, units="in", res=300)
+    print(means_plot)
+    dev.off()
+  }
+}
+
+
+Z_across_regions_plot <- function(Z, par, lab){
+  fig <- ggplot(Z, aes(y=z, x=group)) +
+    geom_boxplot()
+  # Save as png
+  png(file=paste0("/data_J/Results/Plots/", par,"/boxplot_Z_", lab,".png"), width=10,
+      height=5, units="in", res=300)
+  print(fig)
+  dev.off()
 }
