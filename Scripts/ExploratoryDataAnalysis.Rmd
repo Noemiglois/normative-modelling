@@ -1,0 +1,1628 @@
+---
+title: "Normative modeling in Schizophrenia - Exploratory Data Analysis (EDA)"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup I, include=F}
+knitr::opts_chunk$set(
+  include = TRUE,  
+  echo=TRUE, 
+  eval=TRUE, 
+  warning=TRUE, 
+  message = TRUE,
+  cache = TRUE,
+  fig.width = 12,
+  fig.height = 8)
+```
+
+### Packages and libraries
+
+We get a list of all the needed packages, then we install the ones that are not yet and load them all. In the end, we get the number of cores available in PC, which we will be using later on to parallelize and speed the computation.
+
+```{r, warning=F, message = F}
+#install.packages("easypackages")
+library("easypackages")
+
+list.of.packages <- c("viridis", "tidyverse", "MatchIt", "grid", "png", 
+                      "gridExtra", "parallel", "nlme", "JMbayes", "plyr",
+                      "BiocManager", "Biostrings", "lme4", "ggplot2", "dplyr",
+                      "Hmisc", "devtools", "longCombat", "neuroCombat", 
+                      "tinytex", "knitr", "ggExtra", "variancePartition",
+                      "Rmisc", "doParallel", "hrbrthemes", "cowplot", 
+                      "BiocParallel", "effectsize", "ggpubr", "stats")
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+  if(length(new.packages)>0) { install.packages(new.packages)}
+
+libraries(list.of.packages)
+rm(list.of.packages, new.packages)
+
+```
+
+
+```{r, eval = FALSE, include = FALSE}
+install_github("jcbeer/longCombat")
+#install_github("jfortin1/neuroCombatData")
+#install_github("jfortin1/neuroCombat_Rpackage")
+BiocManager::install("Biostrings")
+BiocManager::install("variancePartition")
+# install_version("dplyr", version = "1.0.5", repos = "http://cran.us.r-project.org")
+tinytex::install_tinytex()
+```
+
+### Set the working directory and load functions
+
+```{r, warning=F, message = F}
+setwd("/data_J/Scripts")
+source("1_DataPreparation.R")
+source("4_EDA.R")
+```
+
+### Load data
+
+```{r, warning = F, message = F}
+df_308 <- read.csv("/data_J/Data/parc308/parc308.csv")
+df_308_lc_M <- read.csv("/data_J/Data/parc308/parc308_harmonized_matched.csv")
+df_308_lc_NoM <- read.csv("/data_J/Data/parc308/parc308_lC_harmonized.csv")
+
+df_68 <- read.csv("/data_J/Data/parc68/parc68.csv")
+df_68_lc_M <- read.csv("/data_J/Data/parc68/parc68_CT_harmonized_matched.csv")
+df_68_lc_NoM <- read.csv("/data_J/Data/parc68/parc68_CT_lC_harmonized.csv")
+```
+
+# Plot characteristics of data
+
+```{r eval=FALSE, include=FALSE}
+# Para averiguar qué sujetos tienen timepoint 1 pero no tienen timepoint 2.
+# Eliminados en la función getData por --> project criteria
+
+cat(nrow(subset(df_68_lc_NoM, timepoint==1)), "sujetos en timepoint 1\n")
+cat(nrow(subset(df_68_lc_NoM, timepoint==2)), "sujetos en timepoint 2\n")
+
+a <- unique(subset(df_68_lc_NoM, timepoint==1)$subID)
+b <- unique(subset(df_68_lc_NoM, timepoint==2)$subID)
+c <- sort(a*!(a %in% b))
+cat("Los sujetos que tienen timepoint 1 pero no tienen timepoint 2 son:",c[c!=0], "\n")
+cat("Pero si que tienen dos timepoint (el 1 y el 3)")
+
+subset(df_68_lc_NoM, subID==133)
+subset(df_68_lc_NoM, subID==267)
+subset(df_68_lc_NoM, subID==804)
+subset(df_68_lc_NoM, subID==822)
+subset(df_68_lc_NoM, subID==879)
+subset(df_68_lc_NoM, subID==931)
+
+rm(a,b,c)
+
+```
+
+A. Scatter plot of birth year and year of the mri acquisition. Connected dots show repeated measurements of the same participant. Blue dots represent each unique patient, while the black ones represent the consecutive measurements. There is a big amount of subjects whose birth year or year of the acquisition is missing (NA value).
+
+```{r echo=FALSE}
+df_morphosim <- read.csv("/data_J/Data/planU_morphosim_rawdatabase.csv")
+# # subject 563 born in 1980, the third FU has date=NA
+# df_morphosim <- subset(df_morphosim, !subID==563)
+# # subject 696 born in 1987, the third FU has date=NA
+# df_morphosim <- subset(df_morphosim, !subID==696)
+
+dates <- as.POSIXct(df_morphosim$mri_datum, format = "%Y-%m-%d")
+mri_dates <- format(dates, format="%Y")
+
+dates <- as.POSIXct(df_morphosim$date_of_birth, format = "%m/%d/%Y")
+birth_dates <- format(dates, format = "%Y")
+
+df_plot <- data.frame("mri_dates"   = mri_dates, 
+                      "birth_dates" = birth_dates, 
+                      "subID"       = df_morphosim$subID,
+                      "scode"       = df_morphosim$scode,
+                      "timepoint"   = df_morphosim$timepoint)
+df_plot <- df_plot[order(df_plot$mri_dates),]
+
+rm(dates, mri_dates, birth_dates, df_morphosim)
+```
+
+
+```{r echo=FALSE}
+plot_A <- ggplot(df_plot, aes_string(x="mri_dates", 
+                           y="birth_dates", 
+                           group= "subID",
+                           label = "subID")) +
+  geom_line() +
+  geom_point(alpha = 1/10) +
+  geom_point(data=df_plot[!duplicated(df_plot$subID), ], color="blue", alpha = 1/5) +
+  xlab("MRI acquisition date  (year)") + 
+  ylab("Birth date (year)") +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(), 
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5))
+```
+
+B. Histogram of the date of the initial acquisition (337 rows are non-finite values, NA)
+
+```{r echo=FALSE}
+plot_B <- ggplot(df_plot[!duplicated(df_plot$subID), ], aes(x=birth_dates)) + 
+  geom_bar() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(), 
+        axis.line   = element_line(colour = "black"),
+        plot.title  = element_text(hjust = 0.5))+
+  xlab("Date of birth") + 
+  ylab("Number of subjects") +
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE))
+```
+
+C. Histogram of time (in years) between measurements. The highest peak corresponds to participants with 3 years between measurements.
+
+```{r echo=FALSE}
+df_plt <- df_plot %>%
+  mutate(mri_dates = as.numeric(mri_dates)) %>%
+  group_by(subID) %>%
+  mutate(t_bw_meas = c(0, diff(mri_dates))) %>%
+  filter(t_bw_meas>0)
+
+plot_C <- ggplot(df_plt, aes(x=t_bw_meas, group=subID)) + 
+  geom_bar() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(), 
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5))+
+  ylab("Number of subjects") + 
+  xlab("Time between measurements (years)")
+```
+
+```{r echo=FALSE}
+ggarrange(plot_A,
+          ggarrange(plot_B,
+                    plot_C,
+                    ncol = 2,
+                    labels = c("B", "C")),
+          nrow = 2,
+          labels = "A")
+
+rm(plot_A, plot_B, plot_C, df_plot)
+```
+### Scanner effect
+
+```{r}
+
+#df_morphosim <- read.csv("/data_J/Data/planU_morphosim_rawdatabase.csv")
+
+freq.table <- table(df_68_lc_NoM$acode, df_68_lc_NoM$scode, df_68_lc_NoM$timepoint, df_68_lc_NoM$dcode)
+
+sex = c(0,0,1,1)
+scanner = c("Scanner 1","Scanner 2","Scanner 1","Scanner 2")
+
+####### timepoint 1, HC #######
+DF_Z <- NULL
+nreg = as.list(freq.table[1:2,1:2, 1, 1])
+
+DF_Z <- data.frame("Sex" = as.factor(sex),
+                   "Scanner"= as.factor(scanner),
+                   "nreg"     = as.numeric(nreg))
+
+HC1 <- ggplot(DF_Z, aes(x = scanner, y=nreg, fill=Sex))  +  
+  geom_bar(stat = "identity", position=position_dodge()) +
+  labs(x = " ",
+       y = "Baseline",
+       title= "Healthy controls") +
+  ylim(0, 110)+
+  theme_bw()  +
+  # ylim(c(0, 60)) +
+  geom_text(aes(label = nreg),
+            position = position_dodge(width = 1),
+            vjust = -0.1, size=8 ) +
+  scale_fill_manual(name = " ",
+                      labels = c("Females", "Males"),
+                      values = c(adjustcolor("midnightblue", alpha.f = 0.4),
+                                 adjustcolor("green4", alpha.f = 0.4))) +
+  theme(legend.position="right",
+        plot.title  =element_text(size=18),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size=22),
+        axis.text.x =element_text(size=18),
+        axis.text.y =element_text(size=22),
+        axis.ticks.x=element_blank(),
+        axis.line.x = element_blank(),
+        legend.text = element_text(size = 25))
+
+
+####### timepoint 2, HC #######
+DF_Z <- NULL
+nreg = as.list(freq.table[1:2,1:2, 2, 1])
+DF_Z <- data.frame("Sex" = as.factor(sex),
+                   "Scanner"= as.factor(scanner),
+                   "nreg"     = as.numeric(nreg))
+
+HC2 <- ggplot(DF_Z, aes(x = scanner, y=nreg, fill=Sex))  +  
+  geom_bar(stat = "identity", position=position_dodge()) +
+  labs(x = " ",
+       y = "first follow-up") +
+  ylim(0, 110)+
+  theme_bw()  +
+  # ylim(c(0, 60)) +
+  geom_text(aes(label = nreg),
+            position = position_dodge(width = 1),
+            vjust = -0.1, size=8 ) +
+  scale_fill_manual(name = " ",
+                      labels = c("Females", "Males"),
+                      values = c(adjustcolor("midnightblue", alpha.f = 0.4),
+                                 adjustcolor("green4", alpha.f = 0.4))) +
+  theme(legend.position="right",
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size=22),
+        axis.text.x =element_text(size=18),
+        axis.text.y =element_text(size=22),
+        axis.ticks.x=element_blank(),
+        axis.line.x = element_blank(),
+        legend.text = element_text(size = 25))
+
+####### timepoint 3, HC #######
+DF_Z <- NULL
+nreg = as.list(freq.table[1:2,1:2, 3, 1])
+DF_Z <- data.frame("Sex" = as.factor(sex),
+                   "Scanner"= as.factor(scanner),
+                   "nreg"     = as.numeric(nreg))
+
+HC3 <- ggplot(DF_Z, aes(x = scanner, y=nreg, fill=Sex))  +  
+  geom_bar(stat = "identity", position=position_dodge()) +
+  labs(x = " ",
+       y = "second follow-up") +
+  ylim(0, 110)+
+  theme_bw()  +
+  # ylim(c(0, 60)) +
+  geom_text(aes(label = nreg),
+            position = position_dodge(width = 1),
+            vjust = -0.1, size=8 ) +
+  scale_fill_manual(name = " ",
+                      labels = c("Females", "Males"),
+                      values = c(adjustcolor("midnightblue", alpha.f = 0.4),
+                                 adjustcolor("green4", alpha.f = 0.4))) +
+  theme(legend.position="right",
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size=22),
+        axis.text.x =element_text(size=18),
+        axis.text.y =element_text(size=22),
+        axis.ticks.x=element_blank(),
+        axis.line.x = element_blank(),
+        legend.text = element_text(size = 25))
+
+
+####### timepoint 1, SZP #######
+DF_Z <- NULL
+nreg = as.list(freq.table[1:2,1:2, 1, 2])
+
+DF_Z <- data.frame("Sex" = as.factor(sex),
+                   "Scanner"= as.factor(scanner),
+                   "nreg"     = as.numeric(nreg))
+
+SZP1 <- ggplot(DF_Z, aes(x = scanner, y=nreg, fill=Sex))  +  
+  geom_bar(stat = "identity", position=position_dodge()) +
+  labs(x = " ",
+       y = " ",
+       title= "Schizophrenia patients")+
+  ylim(0, 110)+
+  theme_bw()  +
+  # ylim(c(0, 60)) +
+  geom_text(aes(label = nreg),
+            position = position_dodge(width = 1),
+            vjust = -0.1, size=8 ) +
+  scale_fill_manual(name = " ",
+                      labels = c("Females", "Males"),
+                      values = c(adjustcolor("midnightblue", alpha.f = 0.4),
+                                 adjustcolor("green4", alpha.f = 0.4))) +
+  theme(legend.position="right",
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size=22),
+        plot.title  =element_text(size=18),
+        axis.text.x =element_text(size=18),
+        axis.text.y =element_text(size=22),
+        axis.ticks.x=element_blank(),
+        axis.line.x = element_blank(),
+        legend.text = element_text(size = 25))
+
+
+####### timepoint 2, SZP #######
+DF_Z <- NULL
+nreg = as.list(freq.table[1:2,1:2, 2, 2])
+DF_Z <- data.frame("Sex" = as.factor(sex),
+                   "Scanner"= as.factor(scanner),
+                   "nreg"     = as.numeric(nreg))
+
+SZP2 <- ggplot(DF_Z, aes(x = scanner, y=nreg, fill=Sex))  +  
+  geom_bar(stat = "identity", position=position_dodge()) +
+  labs(x = " ",
+       y = " ") +
+  ylim(0, 110)+
+  theme_bw()  +
+  # ylim(c(0, 60)) +
+  geom_text(aes(label = nreg),
+            position = position_dodge(width = 1),
+            vjust = - 0.1,  size= 8) +
+  scale_fill_manual(name = " ",
+                      labels = c("Females", "Males"),
+                      values = c(adjustcolor("midnightblue", alpha.f = 0.4),
+                                 adjustcolor("green4", alpha.f = 0.4))) +
+  theme(legend.position="right",
+        axis.title.x = element_blank(),
+        axis.text.x =element_text(size=18),
+        axis.text.y =element_text(size=22),
+        axis.ticks.x=element_blank(),
+        axis.line.x = element_blank(),
+        legend.text = element_text(size = 25))
+
+####### timepoint 3, SZP #######
+DF_Z <- NULL
+nreg = as.list(freq.table[1:2,1:2, 3, 2])
+DF_Z <- data.frame("Sex" = as.factor(sex),
+                   "Scanner"= as.factor(scanner),
+                   "nreg"     = as.numeric(nreg))
+
+SZP3 <- ggplot(DF_Z, aes(x = scanner, y=nreg, fill=Sex))  +  
+  geom_bar(stat = "identity", position=position_dodge()) +
+  labs(x = " ",
+       y = " ") +
+  ylim(0, 110)+
+  theme_bw()  +
+  geom_text(aes(label = nreg),
+            position = position_dodge(width = 1),
+            vjust = -0.1,  size=8) +
+  scale_fill_manual(name = " ",
+                      labels = c("Females", "Males"),
+                      values = c(adjustcolor("midnightblue", alpha.f = 0.4),
+                                 adjustcolor("green4", alpha.f = 0.4))) +
+  theme(legend.position="right",
+        axis.title.x = element_blank(),
+        axis.text.x =element_text(size=18),
+        axis.text.y =element_text(size=22),
+        axis.ticks.x=element_blank(),
+        axis.line.x = element_blank(),
+        legend.text = element_text(size = 25))
+
+figure <- ggarrange(HC1, SZP1, HC2, SZP2, HC3, SZP3, ncol = 2, nrow = 3,
+                    legend = "right", common.legend = TRUE)
+```
+
+```{r echo=FALSE, fig.height=12, fig.width=20, message=FALSE, warning=FALSE}
+annotate_figure(figure, 
+                fig.lab.face = "bold", 
+                top = text_grob("Number of M/F for each scanner", 
+                                face = "bold", size = 24, color = "black"))
+
+```
+
+```{r}
+nreg = as.list(table(df_68_lc_NoM$acode, df_68_lc_NoM$scode))
+sex = c(0,0,1,1)
+scanner = c("Scanner 1","Scanner 2","Scanner 1","Scanner 2")
+DF_Z <- NULL
+DF_Z <- data.frame("Sex"    = as.factor(sex),
+                   "Scanner"= as.factor(scanner),
+                   "nreg"   = as.numeric(nreg))
+```
+
+
+```{r}
+ggplot(DF_Z, aes(x = Scanner, y=nreg, fill=Sex))  +  
+  geom_bar(stat = "identity", position=position_dodge()) +
+  labs(x = " ",
+       y = " ") +
+  ylim(0, 455)+
+  theme_bw()  +
+  geom_text(aes(label = nreg),
+            position = position_dodge(width = 1),
+            vjust = -0.1, size=8 ) +
+  scale_fill_manual(name = " ",
+                      labels = c("Females", "Males"),
+                      values = c(adjustcolor("midnightblue", alpha.f = 0.4),
+                                 adjustcolor("green4", alpha.f = 0.4))) +
+  theme(legend.position="right",
+        plot.title  =element_text(size=18),
+        axis.title.x = element_blank(),
+        axis.text.x =element_text(size=18),
+        axis.ticks.x=element_blank(),
+        axis.line.x = element_blank(),
+        legend.text = element_text(size = 25))
+```
+
+
+### Some more data
+
+```{r}
+# Mean time between measurements
+mean(df_plt$t_bw_meas) 
+min(df_plt$t_bw_meas) 
+max(df_plt$t_bw_meas) 
+
+# Age range at BL
+df_aux <- df_68[,c("age", "timepoint")]
+# df_aux <- df_aux[df_aux[,"timepoint"]==1,]
+mean(df_aux$age)
+min(df_aux$age)
+max(df_aux$age)
+```
+
+# Covariates
+
+The covariates that will be used are:
+
+- age: age of the subject at the moment of the image acquisition. Continuous variable (16.41-69.8).
+- scode: biological sex of the subject. Binary variable [0, 1], being 1 for males and 0 for females.
+- dcode: diagnostic of the subject. Binary variable [0, 1], being 1 for patients and 0 for controls.
+- acode: machine on which the image was taken. Binary variable [0, 1].
+- timepoint: number of the visit. Discrete variable [1, 2, 3].
+- subID: unique identifier of each subject. Discrete variable [2, ..., 952].
+- euler_lh and euler_rh: euler number is a measure that represents the amount of abnormalities encountered in a step of the image preprocessing. There are two values corresponding to the left and right hemisphere of the brain. We computed the mean of this values to obtain a new covariate: euler. It is a negative discrete variable, in this case between (-339, -28).
+- ID: unique identifier of each image. Categorical variable. 
+
+In the following we explore the effects of the data preparation pipeline applied before, we show relevant changes on **age variable** before and after applying the match-it workflow. To do so, we can use either the 68 regions parcellation or the 308 regions one, results will be the same because we are just looking at the covariates (which are the same for both parcellation maps). First we show a boxplot graph of the age distribution before and after the match-it, differentiating between sex (male-female) and diagnosis (healthy control - patient):
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# NO MATCHED
+male.df        <- subset(df_68_lc_NoM, scode==1)
+male.pat.age   <- subset(male.df, dcode==1)$age
+male.con.age   <- subset(male.df, dcode==0)$age
+
+female.df        <- subset(df_68_lc_NoM, scode==0)
+female.pat.age   <- subset(female.df, dcode==1)$age
+female.con.age   <- subset(female.df, dcode==0)$age
+
+data1 <- data.frame(
+  name=c( rep("Male pat",length(male.pat.age)), 
+          rep("Female pat",length(female.pat.age)), 
+          rep("Male hc",length(male.con.age)), 
+          rep("Female hc",length(female.con.age))),
+  value=c(male.pat.age, female.pat.age,
+          male.con.age, female.con.age))
+
+data1$name <- factor(data1$name, levels=c("Male pat", "Female pat", "Male hc", "Female hc"))
+
+plot1 <- data1 %>%
+  ggplot( aes(x=name, y=value, fill=name)) +
+  geom_boxplot() +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        legend.position="none",
+        plot.title = element_text(size=15)) +
+  ggtitle("Age distribution (NO match-it)") +
+  xlab("") + 
+  ylab("Age (years)") + 
+  ylim(15, 70)
+
+# MATCHED
+male.df        <- subset(df_68_lc_M, scode==1)
+male.pat.age   <- subset(male.df, dcode==1)$age
+male.con.age   <- subset(male.df, dcode==0)$age
+
+female.df        <- subset(df_68_lc_M, scode==0)
+female.pat.age   <- subset(female.df, dcode==1)$age
+female.con.age   <- subset(female.df, dcode==0)$age
+
+data2 <- data.frame(
+  name=c( rep("Male pat",length(male.pat.age)), 
+          rep("Female pat",length(female.pat.age)), 
+          rep("Male hc",length(male.con.age)), 
+          rep("Female hc",length(female.con.age))),
+  value=c(male.pat.age, female.pat.age,
+          male.con.age, female.con.age))
+
+data2$name <- factor(data2$name, levels=c("Male pat", "Female pat", "Male hc", "Female hc"))
+
+plot2 <- data2 %>%
+  ggplot( aes(x=name, y=value, fill=name)) +
+  geom_boxplot() +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        legend.position="none",
+        plot.title = element_text(size=15)) +
+  ggtitle("Age distribution (match-it)") +
+  ylab(" ") + 
+  xlab("") + 
+  ylim(15, 70)
+
+plot_grid(plot1, plot2, labels = "AUTO")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# NO MATCHED
+male.age   <- subset(df_68_lc_NoM, scode==1)$age
+female.age <- subset(df_68_lc_NoM, scode==0)$age
+
+data1 <- data.frame(
+  name=c( rep("Male",length(male.age)), 
+          rep("Female",length(female.age))),
+  value=c(male.age, female.age))
+
+data1$name <- factor(data1$name, levels=c("Male", "Female"))
+
+plot1 <- data1 %>%
+  ggplot( aes(x=name, y=value, fill=name)) +
+    geom_boxplot() +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+      theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        legend.position="none",
+        plot.title = element_text(size=15)) +
+    ggtitle("Age distribution by sex (NO match-it)") +
+    ylab("Age (years)") + 
+    xlab("") + 
+    ylim(15, 70)
+
+# MATCHED
+male.age   <- subset(df_68_lc_M, scode==1)$age
+female.age <- subset(df_68_lc_M, scode==0)$age
+
+data2 <- data.frame(
+  name=c( rep("Male",length(male.age)), 
+          rep("Female",length(female.age))),
+  value=c(male.age, female.age))
+
+data2$name <- factor(data2$name, levels=c("Male", "Female"))
+
+plot2 <- data2 %>%
+  ggplot( aes(x=name, y=value, fill=name)) +
+    geom_boxplot() +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+      theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        legend.position="none",
+        plot.title = element_text(size=15)) +
+    ggtitle("Age distribution by sex (match-it)") +
+    ylab(" ") + 
+    xlab("") + 
+    ylim(15, 70)
+
+plot_grid(plot1, plot2, labels = "AUTO")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# NO MATCHED
+pat.age   <- subset(df_68_lc_NoM, dcode==1)$age
+con.age <- subset(df_68_lc_NoM, dcode==0)$age
+
+data1 <- data.frame(
+  name=c( rep("Patient",length(pat.age)), 
+          rep("Control",length(con.age))),
+  value=c(pat.age, con.age))
+
+data1$name <- factor(data1$name, levels=c("Patient", "Control"))
+
+plot1 <- data1 %>%
+  ggplot( aes(x=name, y=value, fill=name)) +
+  geom_boxplot() +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        legend.position="none",
+        plot.title = element_text(size=15)) +
+  ggtitle("Age distribution by diagnose (NO match-it)") +
+  ylab("Age (years)") + 
+  xlab("") + 
+  ylim(15, 70)
+
+# MATCHED
+pat.age   <- subset(df_68_lc_M, scode==1)$age
+con.age <- subset(df_68_lc_M, scode==0)$age
+
+data2 <- data.frame(
+  name=c( rep("Patient",length(pat.age)), 
+          rep("Control",length(con.age))),
+  value=c(pat.age, con.age))
+
+data2$name <- factor(data2$name, levels=c("Patient", "Control"))
+
+plot2 <- data2 %>%
+  ggplot( aes(x=name, y=value, fill=name)) +
+  geom_boxplot() +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        legend.position="none",
+        plot.title = element_text(size=15)) +
+  ggtitle("Age distribution by diagnose (match-it)") +
+  ylab(" ") + 
+  xlab("") + 
+  ylim(15, 70)
+
+plot_grid(plot1, plot2, labels = "AUTO")
+```
+
+
+A quick look is taken at the ages than doesn't match between controls and patients (applying the floor function to the age variable, that is, rounding down to the nearest integer) in both datasets:
+
+```{r}
+EDA_match_ages(df_68_lc_NoM, "NO-match-it")
+
+EDA_match_ages(df_68_lc_M, "Match-it")
+```
+
+
+We show the number of subjects by timepoint and by sex, before and after the match. **The original number of subjects in each category is indicated between parenthesis.**
+
+|            | timepoint 1| timepoint 2 | timepoint 3 |
+| -----------|:----------:|:-----------:|:-----------:|
+| # controls | 168 (293)  | 168   (293) | 49  (104)   |
+| # patients | 168 (168)  | 168   (168) | 49  (49)    |
+
+
+```{r, eval=FALSE, include=FALSE}
+df <- df_lC_NO_matched_308
+table(df$dcode, df$timepoint)
+
+df <- df_lC_matched_308
+table(df$dcode, df$timepoint)
+```
+
+
+```{r, eval=FALSE, include=FALSE}
+df <- df_lC_matched_308
+i=3
+table(dcode=df$dcode, sex=df$scode, timepoint=df$timepoint)[,,i]
+```
+
+|            | sex 0    | sex 1    |
+| -----------|:--------:|:--------:|
+| Timepoint 1|          |          |
+| # controls |  38 (130)| 130 (163)|
+| # patients |  38  (38)| 130 (130)|
+| Timepoint 2|          |          |
+| # controls |  38 (130)| 130 (163)|
+| # patients |  38  (38)| 130 (130)|
+| Timepoint 3|          |          |
+| # controls |   8 (49) | 41  (55) |
+| # patients |   7 (7)  | 42  (42) |
+
+
+# Variance contribution
+
+Now we explore the **variance contribution** across measures with the fitExtractVarPartModel() function from Bioconductor (see [doc](https://www.rdocumentation.org/packages/variancePartition/versions/1.2.5/topics/fitExtractVarPartModel)). This function fits a linear (mixed) model, taking into account some manually introduced formula, in order to estimate the contribution of multiple sources of variation while simultaneously correcting for all other variables. It reports the fraction of variance attributable to each variable in the model. This will help us to know what covariates can be used and it justifies the model used.
+
+
+## NO Match-it dataframe
+
+At first, we will deal with the NO matched dataset.
+
+The following violin plots show the variance partition based on a general linear model by timepoint (formula <- ~ Age + Sex + Diagnosis + Euler_number).
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+variancePartition_lm(df = df_68_lc_NoM,
+                  measure = "CT_freesurfer",
+                  lab = "lC_NO_matched_parc68_lm",
+                  par = "parc68")
+
+variancePartition_lm(df = df_lC_NO_matched_308,
+                  measure = "thickness",
+                  lab = "lC_NO_matched_parc308_lm",
+                  par = "parc308")
+```
+
+```{r, echo=FALSE}
+tp1_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/violin_tp1_lC_NO_matched_parc68_lm.png")), interpolate = FALSE)
+tp2_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/violin_tp2_lC_NO_matched_parc68_lm.png")), interpolate = FALSE)
+tp3_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/violin_tp3_lC_NO_matched_parc68_lm.png")), interpolate = FALSE)
+
+tp1_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/violin_tp1_lC_NO_matched_parc308_lm.png")), interpolate = FALSE)
+tp2_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/violin_tp2_lC_NO_matched_parc308_lm.png")), interpolate = FALSE)
+tp3_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/violin_tp3_lC_NO_matched_parc308_lm.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(tp1_68, tp2_68, tp3_68, top="68 regions parcellation"), arrangeGrob(tp1_308, tp2_308, tp3_308, top="308 regions parcellation"), ncol=2)
+```
+
+But the fitExtractVarPartModel() function can also cope with mixed effects models. This next representation is based on a linear mixed effects model, without explicitly differentiating by timepoint (formula <- ~ Age + (1|Sex) + (1|Diagnosis) + Euler_number + (1|Individual)), but implicitly incorporated by the subID covariate.
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, results = 'hide'}
+variancePartition_lme(df = df_68_lc_NoM,
+                  measure = "CT_freesurfer",
+                  lab = "lC_NO_matched_parc68_lme",
+                  par = "parc68")
+
+variancePartition_lme(df = df_lC_NO_matched_308,
+                  measure = "thickness",
+                  lab = "lC_NO_matched_parc308_lme",
+                  par = "parc308")
+```
+
+
+```{r, echo=FALSE}
+tp1_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/violin_lC_NO_matched_parc68_lme.png")), interpolate = FALSE)
+tp1_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/violin_lC_NO_matched_parc308_lme.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(tp1_68, top="68 regions parcellation"), arrangeGrob(tp1_308, top="308 regions parcellation"), nrow=1)
+```
+
+
+## Match-it dataframe
+
+Now, we will apply the same algorithms to the matched dataset.
+
+The following violin plots show the variance partition based on a general linear model by timepoint (formula <- ~ Age + Sex + Diagnosis + Euler_number).
+
+```{r message=FALSE, warning=FALSE, include=FALSE, results = 'hide'}
+variancePartition_lm(df = df_68_lc_M,
+                  measure = "CT_freesurfer",
+                  lab = "lC_matched_parc68_lm",
+                  par = "parc68")
+
+variancePartition_lm(df = df_lC_matched_308,
+                  measure = "thickness",
+                  lab = "lC_matched_parc308_lm",
+                  par = "parc308")
+```
+
+```{r, echo=FALSE}
+tp1_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/violin_tp1_lC_matched_parc68_lm.png")), interpolate = FALSE)
+tp2_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/violin_tp2_lC_matched_parc68_lm.png")), interpolate = FALSE)
+tp3_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/violin_tp3_lC_matched_parc68_lm.png")), interpolate = FALSE)
+
+tp1_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/violin_tp1_lC_matched_parc308_lm.png")), interpolate = FALSE)
+tp2_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/violin_tp2_lC_matched_parc308_lm.png")), interpolate = FALSE)
+tp3_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/violin_tp3_lC_matched_parc308_lm.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(tp1_68, tp2_68, tp3_68, top="68 regions parcellation"), arrangeGrob(tp1_308, tp2_308, tp3_308, top="308 regions parcellation"), ncol=2)
+```
+
+
+But the fitExtractVarPartModel() function can also cope with mixed effects models. This next representation is based on a linear mixed effects model, without explicitly differentiating by timepoint (formula <- ~ Age + (1|Sex) + (1|Diagnosis) + Euler_number + (1|Individual)), but implicitly incorporated in the subID covariate.
+
+```{r message=FALSE, warning=FALSE, include=FALSE, results = 'hide'}
+variancePartition_lme(df = df_68_lc_M,
+                  measure = "CT_freesurfer",
+                  lab = "lC_matched_parc68_lme",
+                  par = "parc68")
+
+variancePartition_lme(df = df_lC_matched_308,
+                  measure = "thickness",
+                  lab = "lC_matched_parc308_lme",
+                  par = "parc308")
+```
+
+```{r, echo=FALSE}
+tp1_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/violin_lC_matched_parc68_lme.png")), interpolate = FALSE)
+
+tp1_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/violin_lC_matched_parc308_lme.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(tp1_68, top="68 regions parcellation"), arrangeGrob(tp1_308, top="308 regions parcellation"), nrow=1)
+```
+
+
+# Plot of 9 example regions
+
+Dots represent observations and lines connecting the dots indicate repeated observations of the same individual over the time. Only healthy individuals.
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+df_plot <- df_68_lc_NoM
+i <- c(1, 8, 19, 24, 30, 36, 45, 53, 67)        # 68regions
+measure   <- "CT_freesurfer" # Termination for the measure names lh_bankssts_ + CT_freesurfer
+
+reg_names <- colnames(df_plot%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+
+df_plot <- df_plot[, c(reg_names[i], var_names)] # with only reg_names[i] (lh_bankssts_) and the covariates
+
+df_plot <- df_plot %>%
+  group_by(subID) %>%
+  # Add column of the age at baseline
+  mutate(age_bl = min(age))  %>%
+  group_by(subID)
+
+df_plot$dcode <- factor(df_plot$dcode)
+reg_names <- reg_names[i]
+rm(i, measure, var_names, idx_hc)
+
+reg1 <- ggplot(df_plot, aes_string(x="age", y=reg_names[1], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[1])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg2 <- ggplot(df_plot, aes_string(x="age", y=reg_names[2], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[2])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg3 <- ggplot(df_plot, aes_string(x="age", y=reg_names[3], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[3])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg4 <- ggplot(df_plot, aes_string(x="age", y=reg_names[4], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[4])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg5 <- ggplot(df_plot, aes_string(x="age", y=reg_names[5], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[5])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg6 <- ggplot(df_plot, aes_string(x="age", y=reg_names[6], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[6])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg7 <- ggplot(df_plot, aes_string(x="age", y=reg_names[7], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[7])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg8 <- ggplot(df_plot, aes_string(x="age", y=reg_names[8], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[8])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg9 <- ggplot(df_plot, aes_string(x="age", y=reg_names[9], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[9])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+figure <- ggarrange(reg1, reg2, reg3,
+                    reg4, reg5, reg6,
+                    reg7, reg8, reg9,
+                    ncol = 3, nrow = 3,
+                    legend = "right",
+                    common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("Cortical thickness (¿unidades?)",
+                                 rot = 90),
+                bottom = text_grob("Age (years)"),
+                fig.lab.face = "bold",
+                top = text_grob("68 parcellation, NO matched\n", face = "bold", size = 15, color = "black"))
+
+rm(df_plot, figure, reg_names,
+   reg1, reg2, reg3, reg4, reg5,
+   reg6, reg7, reg8, reg9)
+```
+
+
+
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+df_plot <- df_68_lc_M
+i <- c(1, 8, 19, 24, 30, 36, 45, 53, 67)        # 68regions
+measure   <- "CT_freesurfer" # Termination for the measure names lh_bankssts_ + CT_freesurfer
+
+reg_names <- colnames(df_plot%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+
+df_plot <- df_plot[, c(reg_names[i], var_names)] # df_plot with only reg_names[i] (lh_bankssts_) and the covariates
+
+df_plot <- df_plot %>%
+  group_by(subID) %>%
+  # Add column of the age at baseline
+  mutate(age_bl = min(age))  %>%
+  group_by(subID)
+
+df_plot$dcode <- factor(df_plot$dcode)
+reg_names <- reg_names[i]
+rm(i, measure, var_names)
+
+reg1 <- ggplot(df_plot, aes_string(x="age", y=reg_names[1], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[1])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg2 <- ggplot(df_plot, aes_string(x="age", y=reg_names[2], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[2])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg3 <- ggplot(df_plot, aes_string(x="age", y=reg_names[3], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[3])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg4 <- ggplot(df_plot, aes_string(x="age", y=reg_names[4], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[4])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg5 <- ggplot(df_plot, aes_string(x="age", y=reg_names[5], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[5])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg6 <- ggplot(df_plot, aes_string(x="age", y=reg_names[6], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[6])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg7 <- ggplot(df_plot, aes_string(x="age", y=reg_names[7], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[7])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg8 <- ggplot(df_plot, aes_string(x="age", y=reg_names[8], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[8])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg9 <- ggplot(df_plot, aes_string(x="age", y=reg_names[9], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[9])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+figure <- ggarrange(reg1, reg2, reg3,
+                    reg4, reg5, reg6,
+                    reg7, reg8, reg9,
+                    ncol = 3, nrow = 3,
+                    legend = "right",
+                    common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("Cortical thickness (¿unidades?)",
+                                 rot = 90),
+                bottom = text_grob("Age (years)"),
+                fig.lab.face = "bold",
+                top = text_grob("68 parcellation, matched\n", face = "bold", size = 15, color = "black"))
+
+rm(df_plot, figure, reg_names,
+   reg1, reg2, reg3, reg4, reg5,
+   reg6, reg7, reg8, reg9)
+
+
+```
+
+
+
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+df_plot <- df_lC_NO_matched_308
+i <- c(1, 60, 90, 120, 150, 180, 200, 240, 300) # 308regions
+measure   <- "thickness" # Termination for the measure names lh_bankssts_ + thickness
+
+reg_names <- colnames(df_plot%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+
+df_plot <- df_plot[, c(reg_names[i], var_names)] # df_plot with only reg_names[i] (lh_bankssts_) and the covariates
+
+df_plot <- df_plot %>%
+  group_by(subID) %>%
+  # Add column of the age at baseline
+  mutate(age_bl = min(age))  %>%
+  group_by(subID)
+
+df_plot$dcode <- factor(df_plot$dcode)
+reg_names <- reg_names[i]
+rm(i, measure, var_names)
+
+reg1 <- ggplot(df_plot, aes_string(x="age", y=reg_names[1], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[1])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg2 <- ggplot(df_plot, aes_string(x="age", y=reg_names[2], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[2])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg3 <- ggplot(df_plot, aes_string(x="age", y=reg_names[3], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[3])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg4 <- ggplot(df_plot, aes_string(x="age", y=reg_names[4], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[4])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg5 <- ggplot(df_plot, aes_string(x="age", y=reg_names[5], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[5])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg6 <- ggplot(df_plot, aes_string(x="age", y=reg_names[6], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[6])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg7 <- ggplot(df_plot, aes_string(x="age", y=reg_names[7], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[7])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg8 <- ggplot(df_plot, aes_string(x="age", y=reg_names[8], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[8])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg9 <- ggplot(df_plot, aes_string(x="age", y=reg_names[9], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[9])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+figure <- ggarrange(reg1, reg2, reg3,
+                    reg4, reg5, reg6,
+                    reg7, reg8, reg9,
+                    ncol = 3, nrow = 3,
+                    legend = "right",
+                    common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("Cortical thickness (¿unidades?)",
+                                 rot = 90),
+                bottom = text_grob("Age (years)"),
+                fig.lab.face = "bold",
+                top = text_grob("308 parcellation, NO matched\n", face = "bold", size = 15, color = "black"))
+
+rm(df_plot, figure, reg_names,
+   reg1, reg2, reg3, reg4, reg5,
+   reg6, reg7, reg8, reg9)
+```
+
+
+
+
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+df_plot <- df_lC_matched_308
+
+i <- c(1, 60, 90, 120, 150, 180, 200, 240, 300) # 308regions
+
+measure   <- "thickness" # Termination for the measure names lh_bankssts_ + thickness
+
+reg_names <- colnames(df_plot%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+
+df_plot <- df_plot[, c(reg_names[i], var_names)] # df_plot with only reg_names[i] (lh_bankssts_) and the covariates
+
+df_plot <- df_plot %>%
+  group_by(subID) %>%
+  # Add column of the age at baseline
+  mutate(age_bl = min(age))  %>%
+  group_by(subID)
+
+df_plot$dcode <- factor(df_plot$dcode)
+reg_names <- reg_names[i]
+rm(i, measure, var_names)
+
+reg1 <- ggplot(df_plot, aes_string(x="age", y=reg_names[1], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[1])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg2 <- ggplot(df_plot, aes_string(x="age", y=reg_names[2], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[2])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg3 <- ggplot(df_plot, aes_string(x="age", y=reg_names[3], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[3])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg4 <- ggplot(df_plot, aes_string(x="age", y=reg_names[4], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[4])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg5 <- ggplot(df_plot, aes_string(x="age", y=reg_names[5], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[5])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg6 <- ggplot(df_plot, aes_string(x="age", y=reg_names[6], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[6])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg7 <- ggplot(df_plot, aes_string(x="age", y=reg_names[7], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[7])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg8 <- ggplot(df_plot, aes_string(x="age", y=reg_names[8], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[8])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+reg9 <- ggplot(df_plot, aes_string(x="age", y=reg_names[9], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.3) +
+  labs(color = "Diagnose\n") +
+  ggtitle(reg_names[9])+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+figure <- ggarrange(reg1, reg2, reg3,
+                    reg4, reg5, reg6,
+                    reg7, reg8, reg9,
+                    ncol = 3, nrow = 3,
+                    legend = "right",
+                    common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("Cortical thickness (¿unidades?)",
+                                 rot = 90),
+                bottom = text_grob("Age (years)"),
+                fig.lab.face = "bold",
+                top = text_grob("308 parcellation, matched\n", face = "bold", size = 15, color = "black"))
+
+
+rm(df_plot, figure, reg_names,
+   reg1, reg2, reg3, reg4, reg5,
+   reg6, reg7, reg8, reg9)
+```
+
+
+
+```{r eval=FALSE, include=FALSE}
+# PLOT ONLY ONE REGION
+
+# df_lC_matched_308
+
+ggplot(df_plot, aes_string(x="age", y=reg_names[7], group= "subID", color="dcode")) +
+  geom_line(alpha = 0.3)+
+  geom_point(alpha = 0.4, size=2) +
+  labs(color = "Diagnose\n") +
+  labs(title=reg_names[7],
+       x ="Age (years)",
+       y = "Cortical thickness")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        # legend.key.size = unit(1, 'cm'), #change legend key size
+        # legend.key.height = unit(1, 'cm'), #change legend key height
+        # legend.key.width = unit(1, 'cm'), #change legend key width
+        legend.title = element_text(size=10), #change legend title font size
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) + #change legend text font size +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Healthy control", "Patient"), values = c("green4", "midnightblue"))
+
+rm(df_plot, figure, reg_names,
+   reg1, reg2, reg3, reg4, reg5,
+   reg6, reg7, reg8, reg9)
+
+
+```
+
+
+
+
+
+
+
+
+
+# EXTRA:
+
+
+```{r}
+df_68  <- getData(parc = "68")
+df_68_lc_NoM <- DataPreparation(df = df_68,
+                                       parc = "68",
+                                       harmonization = T,
+                                       match = F)
+
+```
+
+
+```{r echo=FALSE}
+df_morphosim <- read.csv("/data_J/Data/planU_morphosim_rawdatabase.csv")
+# # subject 563 born in 1980, the third FU has date=NA
+# df_morphosim <- subset(df_morphosim, !subID==563)
+# # subject 696 born in 1987, the third FU has date=NA
+# df_morphosim <- subset(df_morphosim, !subID==696)
+
+dates <- as.POSIXct(df_morphosim$mri_datum, format = "%Y-%m-%d")
+mri_dates <- format(dates, format="%Y")
+
+dates <- as.POSIXct(df_morphosim$date_of_birth, format = "%m/%d/%Y")
+birth_dates <- format(dates, format = "%Y")
+
+df_plot <- data.frame("mri_dates"   = mri_dates, 
+                      "birth_dates" = birth_dates, 
+                      "subID"       = df_morphosim$subID,
+                      "scode"       = df_morphosim$scode,
+                      "dcode"       = df_morphosim$dcode,
+                      "timepoint"   = df_morphosim$timepoint)
+df_plot <- df_plot[order(df_plot$mri_dates),]
+
+rm(dates, mri_dates, birth_dates, df_morphosim)
+
+df_plt <- df_plot %>%
+  mutate(mri_dates = as.numeric(mri_dates)) %>%
+  group_by(subID) %>%
+  mutate(t_bw_meas = c(0, diff(mri_dates))) %>%
+  filter(t_bw_meas>0) %>%
+  dplyr::filter(dcode==1) %>%
+  dplyr::filter(timepoint==2) 
+# 4.05
+# 3.38
+mean(df_plt$t_bw_meas) # Mean time between measurements
+```

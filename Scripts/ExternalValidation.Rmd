@@ -1,0 +1,2563 @@
+---
+title: "Normative modeling in Schizophrenia - External validation clinical measures"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r, warning=F, message = F, echo = FALSE}
+#install.packages("easypackages")
+library("easypackages")
+
+list.of.packages <- c("viridis", "tidyverse", "MatchIt", "grid", "png", 
+                      "gridExtra", "parallel", "nlme", "JMbayes", "plyr",
+                      "BiocManager", "Biostrings", "lme4", "ggplot2", "dplyr",
+                      "Hmisc", "devtools", "longCombat", "neuroCombat", 
+                      "tinytex", "knitr", "ggExtra", "variancePartition",
+                      "Rmisc", "doParallel", "hrbrthemes", "cowplot", 
+                      "BiocParallel", "effectsize", "ggpubr", "caret", "scorer",
+                      "tidyr", "ggrepel")
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+  if(length(new.packages)>0) { install.packages(new.packages)}
+
+libraries(list.of.packages)
+
+rm(list.of.packages, new.packages)
+```
+
+
+```{r, eval = F, include = FALSE}
+tinytex::install_tinytex()
+install_github("jcbeer/longCombat")
+install_github("jfortin1/neuroCombatData")
+install_github("jfortin1/neuroCombat_Rpackage")
+BiocManager::install("BiocParallel")
+BiocManager::install("Biostrings")
+BiocManager::install("variancePartition")
+# install_version("dplyr", version = "1.0.5", repos = "http://cran.us.r-project.org")
+tinytex::install_tinytex()
+devtools::install_github("paulhendricks/scorer")
+```
+
+```{r setup I, echo=F}
+knitr::opts_chunk$set(
+  include = TRUE,  
+  echo    = TRUE, 
+  eval    = TRUE, 
+  warning = TRUE, 
+  message = TRUE,
+  cache   = T,
+  fig.width  = 10,
+  fig.height = 4,
+  error   = TRUE)
+```
+
+## Global Z-score
+
+The global Z-score for subject $j$, timepoint $t$ ($gZ_{jt}$) is achieved by computing a Z-score ratio of the number of regions ($i=1, ..., N$) deviated from the norm (1) divided by the number of regions inside the normative range (2):
+
+$$gZ_{jt}=\frac{\sum_{i}^{N} (|Z_{jti}|>1.96) (1)}{\sum_{i}^{N} (|Z_{jti}|<1.96) (2)}$$ 
+Also, there are two ratios that take into account the direction of the deviation (supra or infra).
+
+
+$$gZ_{jt}supra=\frac{\sum_{i}^{N} (Z_{jti}>1.96)}{\sum_{i}^{N} (|Z_{jti}|<1.96)}$$ 
+$$gZ_{jt}infra=\frac{\sum_{i}^{N} (Z_{jti}<-1.96)}{\sum_{i}^{N} (|Z_{jti}|<1.96)}$$ 
+
+```{r include=FALSE, message=FALSE, warning=FALSE, comment=NA}
+setwd("/data_J/Scripts")
+gZ_df_tp <- read.csv("/data_J/Results/Files/global_Zs_tps.csv")
+df_morphosim <- read.csv("/data_J/Data/planU_morphosim_rawdatabase.csv")
+df_morphosim <- df_morphosim[colnames(df_morphosim)[1:97]] 
+gZ_df_tp$diagnose <- NULL 
+df_to_plot <- merge(gZ_df_tp, df_morphosim)
+rm(gZ_df_tp, df_morphosim)
+df_to_plot <- subset(df_to_plot, dcode==1) # only patients
+df_tps <- df_to_plot[,c("subID","timepoint","gZ","gZ_infra","gZ_supra","IQ_total","scode", "dcode","diagnose", "age", "Age_of_Onset", "PANSS_total", "Total_P", "Total_N", "Total_G",colnames(df_to_plot)[43:72], "age_problems_started", "age_psychotic_problems", "SES_Education_level", "SES_occupational_status", "SES_Education_totalyears")]
+df_tps[] <- lapply(df_tps, function(x) as.numeric(x))
+
+df <- subset(df_tps, timepoint==1)
+rm(df_to_plot, df_tps)
+```
+
+\newpage
+
+## Missing values (patients group)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df_temp <- df
+df_temp$subID <- NULL
+df_temp$timepoint <- NULL
+df_temp$scode <- NULL
+df_temp$dcode <- NULL
+df_temp$acode <- NULL
+DF_percNA <- NULL
+for (cn in colnames(df_temp)) {
+  percNA <- round(sum(is.na(df_temp[,cn]))/ (sum(is.na(df_temp[,cn]))+  sum(!is.na(df_temp[,cn])))*100,2)
+  DF_percNA <- rbind(DF_percNA, data.frame("variable" = cn,
+                                           "percNA" = percNA))}
+DF_percNA <- DF_percNA[order(DF_percNA$percNA), ]
+DF_percNA$percNA <- paste0(DF_percNA$percNA, "%")
+kable(DF_percNA)
+rm(df_temp)
+```
+
+
+\newpage
+## Correlating the global Z-score at BL with change in clinical variables
+## IQ (Timepoint 2 - timepoint 1)
+
+```{r include=FALSE, message=FALSE, warning=FALSE, comment=NA}
+setwd("/data_J/Scripts")
+gZ_df_tp <- read.csv("/data_J/Results/Files/global_Zs_tps.csv")
+df_morphosim <- read.csv("/data_J/Data/planU_morphosim_rawdatabase.csv")
+df_morphosim <- df_morphosim[colnames(df_morphosim)[1:97]] 
+gZ_df_tp$diagnose <- NULL 
+df_to_plot <- merge(gZ_df_tp, df_morphosim)
+rm(gZ_df_tp, df_morphosim)
+df_to_plot <- subset(df_to_plot, dcode==1) # only patients
+df_tps <- df_to_plot[,c("subID","timepoint","gZ","gZ_infra","gZ_supra","IQ_total","scode", "dcode","diagnose", "age", "Age_of_Onset", "PANSS_total", "Total_P", "Total_N", "Total_G",colnames(df_to_plot)[43:72], "age_problems_started", "age_psychotic_problems", "SES_Education_level", "SES_occupational_status", "SES_Education_totalyears")]
+df_tps[] <- lapply(df_tps, function(x) as.numeric(x))
+rm(df_to_plot, df)
+
+df_tp1 <- df_tps[df_tps[,"timepoint"]==1, ] #"IQ_total"
+df_tp1 <- df_tp1[,c("subID","IQ_total")]
+colnames(df_tp1) <- c("subID", "IQ_total_tp1")
+
+df_tp2 <- df_tps[df_tps[,"timepoint"]==2, ] #"IQ_total"
+df_tp2 <- df_tp2[,c("subID","IQ_total")]
+colnames(df_tp2) <- c("subID", "IQ_total_tp2")
+
+df_tp3 <- df_tps[df_tps[,"timepoint"]==3, ] #"IQ_total"
+df_tp3 <- df_tp3[,c("subID","IQ_total")]
+colnames(df_tp3) <- c("subID", "IQ_total_tp3")
+
+##### TP2-TP1
+df_change_IQ <- merge(df_tp1, df_tp2)
+df_change_IQ <- df_change_IQ[!is.na(!df_change_IQ$IQ_total_tp2),]
+df_change_IQ <- df_change_IQ[!is.na(!df_change_IQ$IQ_total_tp1),]
+df_change_IQ$change_IQ_tp2_tp1 <- df_change_IQ$IQ_total_tp2 - df_change_IQ$IQ_total_tp1
+change_IQ_tp2_tp1 <- df_change_IQ
+##### TP3-TP1
+df_change_IQ <- merge(df_tp1, df_tp3)
+df_change_IQ <- df_change_IQ[!is.na(!df_change_IQ$IQ_total_tp3),]
+df_change_IQ <- df_change_IQ[!is.na(!df_change_IQ$IQ_total_tp1),]
+df_change_IQ$change_IQ_tp3_tp1 <- df_change_IQ$IQ_total_tp3 - df_change_IQ$IQ_total_tp1
+change_IQ_tp3_tp1 <- df_change_IQ
+##### TP3-TP2
+df_change_IQ <- merge(df_tp2, df_tp3)
+df_change_IQ <- df_change_IQ[!is.na(!df_change_IQ$IQ_total_tp3),]
+df_change_IQ <- df_change_IQ[!is.na(!df_change_IQ$IQ_total_tp2),]
+df_change_IQ$change_IQ_tp3_tp2 <- df_change_IQ$IQ_total_tp3 - df_change_IQ$IQ_total_tp2
+change_IQ_tp3_tp2 <- df_change_IQ
+
+
+df_tps <- subset(df_tps, timepoint==1)
+df_tps <- df_tps[ , c("subID","gZ", "gZ_infra", "gZ_supra")]
+change_IQ_tp2_tp1 <- merge(change_IQ_tp2_tp1, df_tps)
+change_IQ_tp2_tp1$IQ_total_tp1 <- NULL
+change_IQ_tp2_tp1$IQ_total_tp2 <- NULL
+change_IQ_tp3_tp1 <- merge(change_IQ_tp3_tp1, df_tps)
+change_IQ_tp3_tp1$IQ_total_tp1 <- NULL
+change_IQ_tp3_tp1$IQ_total_tp3 <- NULL
+change_IQ_tp3_tp2 <- merge(change_IQ_tp3_tp2, df_tps)
+change_IQ_tp3_tp2$IQ_total_tp2 <- NULL
+change_IQ_tp3_tp2$IQ_total_tp3 <- NULL
+
+colnames(change_IQ_tp2_tp1) <- c("subID", "change_IQ_tp2_tp1", "gZ_BL", "gZ_infra_BL", "gZ_supra_BL")    
+colnames(change_IQ_tp3_tp1) <- c("subID", "change_IQ_tp3_tp1", "gZ_BL", "gZ_infra_BL", "gZ_supra_BL")
+colnames(change_IQ_tp3_tp2) <- c("subID", "change_IQ_tp3_tp2", "gZ_BL", "gZ_infra_BL", "gZ_supra_BL")
+  
+rm(df_tp1, df_tp2, df_tp3, df_change_IQ, df_tps)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - CHANGE IN IQ (tp 2 - tp 1)
+# gZ
+df <- change_IQ_tp2_tp1
+r <- round(as.numeric(cor.test(df$gZ_BL, df$change_IQ_tp2_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_BL, df$change_IQ_tp2_tp1)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ_BL, y=change_IQ_tp2_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in IQ \n(tp2-tp1)" ,
+       title = paste0("Deviance, patients r=",r,", p=",p))
+
+# INFRA
+r <- round(as.numeric(cor.test(df$gZ_infra_BL, df$change_IQ_tp2_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_infra_BL, df$change_IQ_tp2_tp1)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ_infra_BL, y=change_IQ_tp2_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in IQ \n(tp2-tp1)" ,
+       title = paste0("Infra-deviance, patients r=",r,", p=",p))
+
+# SUPRA
+r <- round(as.numeric(cor.test(df$gZ_supra_BL, df$change_IQ_tp2_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_supra_BL, df$change_IQ_tp2_tp1)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ_supra_BL, y=change_IQ_tp2_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in IQ \n(tp2-tp1)" ,
+       title = paste0("Supra-deviance, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+```
+
+\newpage
+## Correlating the global Z-score at BL with change in clinical variables
+## IQ (Timepoint 3 - timepoint 1)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - CHANGE IN IQ (tp 3 - tp 1)
+# gZ
+df <- change_IQ_tp3_tp1
+r <- round(as.numeric(cor.test(df$gZ_BL, df$change_IQ_tp3_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_BL, df$change_IQ_tp3_tp1)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ_BL, y=change_IQ_tp3_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in IQ \n(tp3-tp1)" ,
+       title = paste0("Deviance, patients r=",r,", p=",p))
+
+# INFRA
+r <- round(as.numeric(cor.test(df$gZ_infra_BL, df$change_IQ_tp3_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_infra_BL, df$change_IQ_tp3_tp1)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ_infra_BL, y=change_IQ_tp3_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in IQ \n(tp3-tp1)" ,
+       title = paste0("Infra-deviance, patients r=",r,", p=",p))
+
+# SUPRA
+r <- round(as.numeric(cor.test(df$gZ_supra_BL, df$change_IQ_tp3_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_supra_BL, df$change_IQ_tp3_tp1)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ_supra_BL, y=change_IQ_tp3_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in IQ \n(tp3-tp1)" ,
+       title = paste0("Supra-deviance, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+```
+
+\newpage
+## Correlating the global Z-score at BL with change in clinical variables
+## IQ (Timepoint 3 - timepoint 2)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - CHANGE IN IQ (tp 3 - tp 2)
+# gZ
+df <- change_IQ_tp3_tp2
+r <- round(as.numeric(cor.test(df$gZ_BL, df$change_IQ_tp3_tp2)$estimate),2)
+p <- round(cor.test(df$gZ_BL, df$change_IQ_tp3_tp2)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ_BL, y=change_IQ_tp3_tp2)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in IQ \n(tp3-tp2)" ,
+       title = paste0("Deviance, patients r=",r,", p=",p))
+
+# INFRA
+r <- round(as.numeric(cor.test(df$gZ_infra_BL, df$change_IQ_tp3_tp2)$estimate),2)
+p <- round(cor.test(df$gZ_infra_BL, df$change_IQ_tp3_tp2)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ_infra_BL, y=change_IQ_tp3_tp2)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in IQ \n(tp3-tp2)" ,
+       title = paste0("Infra-deviance, patients r=",r,", p=",p))
+
+# SUPRA
+r <- round(as.numeric(cor.test(df$gZ_supra_BL, df$change_IQ_tp3_tp2)$estimate),2)
+p <- round(cor.test(df$gZ_supra_BL, df$change_IQ_tp3_tp2)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ_supra_BL, y=change_IQ_tp3_tp2)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in IQ \n(tp3-tp2)" ,
+       title = paste0("Supra-deviance, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+```
+
+
+
+\newpage
+## Correlating the global Z-score at BL with change in clinical variables
+## PANSS (Timepoint 2 - timepoint 1)
+
+```{r include=FALSE, message=FALSE, warning=FALSE, comment=NA}
+setwd("/data_J/Scripts")
+gZ_df_tp <- read.csv("/data_J/Results/Files/global_Zs_tps.csv")
+df_morphosim <- read.csv("/data_J/Data/planU_morphosim_rawdatabase.csv")
+df_morphosim <- df_morphosim[colnames(df_morphosim)[1:97]] 
+gZ_df_tp$diagnose <- NULL 
+df_to_plot <- merge(gZ_df_tp, df_morphosim)
+rm(gZ_df_tp, df_morphosim)
+df_to_plot <- subset(df_to_plot, dcode==1) # only patients
+df_tps <- df_to_plot[,c("subID","timepoint","gZ","gZ_infra","gZ_supra","IQ_total","scode", "dcode","diagnose", "age", "Age_of_Onset", "PANSS_total", "Total_P", "Total_N", "Total_G",colnames(df_to_plot)[43:72], "age_problems_started", "age_psychotic_problems", "SES_Education_level", "SES_occupational_status", "SES_Education_totalyears")]
+df_tps[] <- lapply(df_tps, function(x) as.numeric(x))
+rm(df_to_plot, df)
+
+df_tp1 <- df_tps[df_tps[,"timepoint"]==1, ] #"PANSS_total"
+df_tp1 <- df_tp1[,c("subID","PANSS_total")]
+colnames(df_tp1) <- c("subID", "PANSS_total_tp1")
+
+df_tp2 <- df_tps[df_tps[,"timepoint"]==2, ] #"PANSS_total"
+df_tp2 <- df_tp2[,c("subID","PANSS_total")]
+colnames(df_tp2) <- c("subID", "PANSS_total_tp2")
+
+df_tp3 <- df_tps[df_tps[,"timepoint"]==3, ] #"PANSS_total"
+df_tp3 <- df_tp3[,c("subID","PANSS_total")]
+colnames(df_tp3) <- c("subID", "PANSS_total_tp3")
+
+##### TP2-TP1
+df_change_PANSS <- merge(df_tp1, df_tp2)
+df_change_PANSS <- df_change_PANSS[!is.na(!df_change_PANSS$PANSS_total_tp2),]
+df_change_PANSS <- df_change_PANSS[!is.na(!df_change_PANSS$PANSS_total_tp1),]
+df_change_PANSS$change_PANSS_tp2_tp1 <- df_change_PANSS$PANSS_total_tp2 - df_change_PANSS$PANSS_total_tp1
+change_PANSS_tp2_tp1 <- df_change_PANSS
+##### TP3-TP1
+df_change_PANSS <- merge(df_tp1, df_tp3)
+df_change_PANSS <- df_change_PANSS[!is.na(!df_change_PANSS$PANSS_total_tp3),]
+df_change_PANSS <- df_change_PANSS[!is.na(!df_change_PANSS$PANSS_total_tp1),]
+df_change_PANSS$change_PANSS_tp3_tp1 <- df_change_PANSS$PANSS_total_tp3 - df_change_PANSS$PANSS_total_tp1
+change_PANSS_tp3_tp1 <- df_change_PANSS
+##### TP3-TP2
+df_change_PANSS <- merge(df_tp2, df_tp3)
+df_change_PANSS <- df_change_PANSS[!is.na(!df_change_PANSS$PANSS_total_tp3),]
+df_change_PANSS <- df_change_PANSS[!is.na(!df_change_PANSS$PANSS_total_tp2),]
+df_change_PANSS$change_PANSS_tp3_tp2 <- df_change_PANSS$PANSS_total_tp3 - df_change_PANSS$PANSS_total_tp2
+change_PANSS_tp3_tp2 <- df_change_PANSS
+
+
+df_tps <- subset(df_tps, timepoint==1)
+df_tps <- df_tps[ , c("subID","gZ", "gZ_infra", "gZ_supra")]
+change_PANSS_tp2_tp1 <- merge(change_PANSS_tp2_tp1, df_tps)
+change_PANSS_tp2_tp1$PANSS_total_tp1 <- NULL
+change_PANSS_tp2_tp1$PANSS_total_tp2 <- NULL
+change_PANSS_tp3_tp1 <- merge(change_PANSS_tp3_tp1, df_tps)
+change_PANSS_tp3_tp1$PANSS_total_tp1 <- NULL
+change_PANSS_tp3_tp1$PANSS_total_tp3 <- NULL
+change_PANSS_tp3_tp2 <- merge(change_PANSS_tp3_tp2, df_tps)
+change_PANSS_tp3_tp2$PANSS_total_tp2 <- NULL
+change_PANSS_tp3_tp2$PANSS_total_tp3 <- NULL
+
+colnames(change_PANSS_tp2_tp1) <- c("subID", "change_PANSS_tp2_tp1", "gZ_BL", "gZ_infra_BL", "gZ_supra_BL")     
+colnames(change_PANSS_tp3_tp1) <- c("subID", "change_PANSS_tp3_tp1", "gZ_BL", "gZ_infra_BL", "gZ_supra_BL")
+colnames(change_PANSS_tp3_tp2) <- c("subID", "change_PANSS_tp3_tp2", "gZ_BL", "gZ_infra_BL", "gZ_supra_BL")
+  
+rm(df_tp1, df_tp2, df_tp3, df_change_PANSS, df_tps)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - CHANGE IN PANSS (tp 2 - tp 1)
+# gZ
+df <- change_PANSS_tp2_tp1
+r <- round(as.numeric(cor.test(df$gZ_BL, df$change_PANSS_tp2_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_BL, df$change_PANSS_tp2_tp1)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ_BL, y=change_PANSS_tp2_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in PANSS \n(tp2-tp1)" ,
+       title = paste0("Deviance, patients r=",r,", p=",p))
+
+# INFRA
+r <- round(as.numeric(cor.test(df$gZ_infra_BL, df$change_PANSS_tp2_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_infra_BL, df$change_PANSS_tp2_tp1)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ_infra_BL, y=change_PANSS_tp2_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in PANSS \n(tp2-tp1)" ,
+       title = paste0("Infra-deviance, patients r=",r,", p=",p))
+
+# SUPRA
+r <- round(as.numeric(cor.test(df$gZ_supra_BL, df$change_PANSS_tp2_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_supra_BL, df$change_PANSS_tp2_tp1)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ_supra_BL, y=change_PANSS_tp2_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in PANSS \n(tp2-tp1)" ,
+       title = paste0("Supra-deviance, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+```
+
+\newpage
+## Correlating the global Z-score at BL with change in clinical variables
+## PANSS (Timepoint 3 - timepoint 1)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - CHANGE IN PANSS (tp 3 - tp 1)
+# gZ
+df <- change_PANSS_tp3_tp1
+r <- round(as.numeric(cor.test(df$gZ_BL, df$change_PANSS_tp3_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_BL, df$change_PANSS_tp3_tp1)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ_BL, y=change_PANSS_tp3_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in PANSS \n(tp3-tp1)" ,
+       title = paste0("Deviance, patients r=",r,", p=",p))
+
+# INFRA
+r <- round(as.numeric(cor.test(df$gZ_infra_BL, df$change_PANSS_tp3_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_infra_BL, df$change_PANSS_tp3_tp1)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ_infra_BL, y=change_PANSS_tp3_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in PANSS \n(tp3-tp1)" ,
+       title = paste0("Infra-deviance, patients r=",r,", p=",p))
+
+# SUPRA
+r <- round(as.numeric(cor.test(df$gZ_supra_BL, df$change_PANSS_tp3_tp1)$estimate),2)
+p <- round(cor.test(df$gZ_supra_BL, df$change_PANSS_tp3_tp1)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ_supra_BL, y=change_PANSS_tp3_tp1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in PANSS \n(tp3-tp1)" ,
+       title = paste0("Supra-deviance, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+```
+
+\newpage
+## Correlating the global Z-score at BL with change in clinical variables
+## PANSS (Timepoint 3 - timepoint 2)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - CHANGE IN PANSS (tp 3 - tp 2)
+# gZ
+df <- change_PANSS_tp3_tp2
+r <- round(as.numeric(cor.test(df$gZ_BL, df$change_PANSS_tp3_tp2)$estimate),2)
+p <- round(cor.test(df$gZ_BL, df$change_PANSS_tp3_tp2)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ_BL, y=change_PANSS_tp3_tp2)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in PANSS \n(tp3-tp2)" ,
+       title = paste0("Deviance, patients r=",r,", p=",p))
+
+# INFRA
+r <- round(as.numeric(cor.test(df$gZ_infra_BL, df$change_PANSS_tp3_tp2)$estimate),2)
+p <- round(cor.test(df$gZ_infra_BL, df$change_PANSS_tp3_tp2)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ_infra_BL, y=change_PANSS_tp3_tp2)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in PANSS \n(tp3-tp2)" ,
+       title = paste0("Infra-deviance, patients r=",r,", p=",p))
+
+# SUPRA
+r <- round(as.numeric(cor.test(df$gZ_supra_BL, df$change_PANSS_tp3_tp2)$estimate),2)
+p <- round(cor.test(df$gZ_supra_BL, df$change_PANSS_tp3_tp2)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ_supra_BL, y=change_PANSS_tp3_tp2)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score at BL",
+       y = "Change in PANSS \n(tp3-tp2)" ,
+       title = paste0("Supra-deviance, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+```
+
+
+
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+
+```{r include=FALSE, message=FALSE, warning=FALSE, comment=NA}
+setwd("/data_J/Scripts")
+gZ_df_tp <- read.csv("/data_J/Results/Files/global_Zs_tps.csv")
+df_morphosim <- read.csv("/data_J/Data/planU_morphosim_rawdatabase.csv")
+df_morphosim <- df_morphosim[colnames(df_morphosim)[1:97]] 
+gZ_df_tp$diagnose <- NULL 
+df_to_plot <- merge(gZ_df_tp, df_morphosim)
+rm(gZ_df_tp, df_morphosim)
+df_to_plot <- subset(df_to_plot, dcode==1) # only patients
+df_tps <- df_to_plot[,c("subID","timepoint","gZ","gZ_infra","gZ_supra","IQ_total","scode", "dcode","diagnose", "age", "Age_of_Onset", "PANSS_total", "Total_P", "Total_N", "Total_G",colnames(df_to_plot)[43:72], "age_problems_started", "age_psychotic_problems", "SES_Education_level", "SES_occupational_status", "SES_Education_totalyears")]
+df_tps[] <- lapply(df_tps, function(x) as.numeric(x))
+rm(df_to_plot, df)
+```
+
+## IQ total
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - IQ_total
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$IQ_total)$estimate),2)
+p <- round(cor.test(df$gZ, df$IQ_total)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=IQ_total)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("IQ total \n (",
+                  round(sum(is.na(df$IQ_total))/
+                        (sum(is.na(df$IQ_total))+
+                           sum(!is.na(df$IQ_total)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$IQ_total)$estimate),2)
+p <- round(cor.test(df$gZ, df$IQ_total)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=IQ_total)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("IQ total \n (",
+                  round(sum(is.na(df$IQ_total))/
+                        (sum(is.na(df$IQ_total))+
+                           sum(!is.na(df$IQ_total)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$IQ_total)$estimate),2)
+p <- round(cor.test(df$gZ, df$IQ_total)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=IQ_total)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("IQ total \n (",
+                  round(sum(is.na(df$IQ_total))/
+                        (sum(is.na(df$IQ_total))+
+                           sum(!is.na(df$IQ_total)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## PANSS_total
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - PANSS_total
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$PANSS_total)$estimate),2)
+p <- round(cor.test(df$gZ, df$PANSS_total)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=PANSS_total)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("PANSS total \n (",
+                  round(sum(is.na(df$PANSS_total))/
+                        (sum(is.na(df$PANSS_total))+
+                           sum(!is.na(df$PANSS_total)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$PANSS_total)$estimate),2)
+p <- round(cor.test(df$gZ, df$PANSS_total)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=PANSS_total)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("PANSS total \n (",
+                  round(sum(is.na(df$PANSS_total))/
+                        (sum(is.na(df$PANSS_total))+
+                           sum(!is.na(df$PANSS_total)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$PANSS_total)$estimate),2)
+p <- round(cor.test(df$gZ, df$PANSS_total)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=PANSS_total)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("PANSS total \n (",
+                  round(sum(is.na(df$PANSS_total))/
+                        (sum(is.na(df$PANSS_total))+
+                           sum(!is.na(df$PANSS_total)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## Total P
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - Total_P
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_P)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_P)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=Total_P)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total P \n (",
+                  round(sum(is.na(df$Total_P))/
+                        (sum(is.na(df$Total_P))+
+                           sum(!is.na(df$Total_P)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_P)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_P)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=Total_P)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total P \n (",
+                  round(sum(is.na(df$Total_P))/
+                        (sum(is.na(df$Total_P))+
+                           sum(!is.na(df$Total_P)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_P)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_P)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=Total_P)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total P \n (",
+                  round(sum(is.na(df$Total_P))/
+                        (sum(is.na(df$Total_P))+
+                           sum(!is.na(df$Total_P)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## Total N
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - Total_N
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_N)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_N)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=Total_N)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total N \n (",
+                  round(sum(is.na(df$Total_N))/
+                        (sum(is.na(df$Total_N))+
+                           sum(!is.na(df$Total_N)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_N)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_N)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=Total_N)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total N \n (",
+                  round(sum(is.na(df$Total_N))/
+                        (sum(is.na(df$Total_N))+
+                           sum(!is.na(df$Total_N)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_N)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_N)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=Total_N)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total N \n (",
+                  round(sum(is.na(df$Total_N))/
+                        (sum(is.na(df$Total_N))+
+                           sum(!is.na(df$Total_N)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## Total G
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - Total_G
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_G)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_G)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=Total_G)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total G \n (",
+                  round(sum(is.na(df$Total_G))/
+                        (sum(is.na(df$Total_G))+
+                           sum(!is.na(df$Total_G)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_G)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_G)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=Total_G)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total G \n (",
+                  round(sum(is.na(df$Total_G))/
+                        (sum(is.na(df$Total_G))+
+                           sum(!is.na(df$Total_G)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_G)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_G)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=Total_G)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total G \n (",
+                  round(sum(is.na(df$Total_G))/
+                        (sum(is.na(df$Total_G))+
+                           sum(!is.na(df$Total_G)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## Total N.1
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - Total_N.1
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_N.1)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_N.1)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=Total_N.1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total N.1 \n (",
+                  round(sum(is.na(df$Total_N.1))/
+                        (sum(is.na(df$Total_N.1))+
+                           sum(!is.na(df$Total_N.1)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_N.1)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_N.1)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=Total_N.1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total N.1 \n (",
+                  round(sum(is.na(df$Total_N.1))/
+                        (sum(is.na(df$Total_N.1))+
+                           sum(!is.na(df$Total_N.1)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_N.1)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_N.1)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=Total_N.1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total N.1 \n (",
+                  round(sum(is.na(df$Total_N.1))/
+                        (sum(is.na(df$Total_N.1))+
+                           sum(!is.na(df$Total_N.1)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## Total G.1
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - Total_G.1
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_G.1)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_G.1)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=Total_G.1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total G.1 \n (",
+                  round(sum(is.na(df$Total_G.1))/
+                        (sum(is.na(df$Total_G.1))+
+                           sum(!is.na(df$Total_G.1)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_G.1)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_G.1)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=Total_G.1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total G.1 \n (",
+                  round(sum(is.na(df$Total_G.1))/
+                        (sum(is.na(df$Total_G.1))+
+                           sum(!is.na(df$Total_G.1)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$Total_G.1)$estimate),2)
+p <- round(cor.test(df$gZ, df$Total_G.1)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=Total_G.1)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("Total G.1 \n (",
+                  round(sum(is.na(df$Total_G.1))/
+                        (sum(is.na(df$Total_G.1))+
+                           sum(!is.na(df$Total_G.1)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## P1delusions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - P1delusions
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$P1delusions)$estimate),2)
+p <- round(cor.test(df$gZ, df$P1delusions)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=P1delusions)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P1 delusions \n (",
+                  round(sum(is.na(df$P1delusions))/
+                        (sum(is.na(df$P1delusions))+
+                           sum(!is.na(df$P1delusions)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$P1delusions)$estimate),2)
+p <- round(cor.test(df$gZ, df$P1delusions)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=P1delusions)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P1 delusions \n (",
+                  round(sum(is.na(df$P1delusions))/
+                        (sum(is.na(df$P1delusions))+
+                           sum(!is.na(df$P1delusions)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$P1delusions)$estimate),2)
+p <- round(cor.test(df$gZ, df$P1delusions)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=P1delusions)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P1 delusions \n (",
+                  round(sum(is.na(df$P1delusions))/
+                        (sum(is.na(df$P1delusions))+
+                           sum(!is.na(df$P1delusions)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## P2 conceptual disorganization
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - P2conceptual_disorganization
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$P2conceptual_disorganization)$estimate),2)
+p <- round(cor.test(df$gZ, df$P2conceptual_disorganization)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=P2conceptual_disorganization)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P2 conceptual disorganization \n (",
+                  round(sum(is.na(df$P2conceptual_disorganization))/
+                        (sum(is.na(df$P2conceptual_disorganization))+
+                           sum(!is.na(df$P2conceptual_disorganization)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$P2conceptual_disorganization)$estimate),2)
+p <- round(cor.test(df$gZ, df$P2conceptual_disorganization)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=P2conceptual_disorganization)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P2 conceptual disorganization \n (",
+                  round(sum(is.na(df$P2conceptual_disorganization))/
+                        (sum(is.na(df$P2conceptual_disorganization))+
+                           sum(!is.na(df$P2conceptual_disorganization)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$P2conceptual_disorganization)$estimate),2)
+p <- round(cor.test(df$gZ, df$P2conceptual_disorganization)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=P2conceptual_disorganization)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P2 conceptual disorganization \n (",
+                  round(sum(is.na(df$P2conceptual_disorganization))/
+                        (sum(is.na(df$P2conceptual_disorganization))+
+                           sum(!is.na(df$P2conceptual_disorganization)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## P3 hallucinatory behavior
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - P3hallucinatory_behavior
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$P3hallucinatory_behavior)$estimate),2)
+p <- round(cor.test(df$gZ, df$P3hallucinatory_behavior)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=P3hallucinatory_behavior)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P3 hallucinatory behavior \n (",
+                  round(sum(is.na(df$P3hallucinatory_behavior))/
+                        (sum(is.na(df$P3hallucinatory_behavior))+
+                           sum(!is.na(df$P3hallucinatory_behavior)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$P3hallucinatory_behavior)$estimate),2)
+p <- round(cor.test(df$gZ, df$P3hallucinatory_behavior)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=P3hallucinatory_behavior)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P3 hallucinatory behavior \n (",
+                  round(sum(is.na(df$P3hallucinatory_behavior))/
+                        (sum(is.na(df$P3hallucinatory_behavior))+
+                           sum(!is.na(df$P3hallucinatory_behavior)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$P3hallucinatory_behavior)$estimate),2)
+p <- round(cor.test(df$gZ, df$P3hallucinatory_behavior)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=P3hallucinatory_behavior)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P3 hallucinatory behavior \n (",
+                  round(sum(is.na(df$P3hallucinatory_behavior))/
+                        (sum(is.na(df$P3hallucinatory_behavior))+
+                           sum(!is.na(df$P3hallucinatory_behavior)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## P4 excitement
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - P4excitement
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$P4excitement)$estimate),2)
+p <- round(cor.test(df$gZ, df$P4excitement)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=P4excitement)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P4 excitement \n (",
+                  round(sum(is.na(df$P4excitement))/
+                        (sum(is.na(df$P4excitement))+
+                           sum(!is.na(df$P4excitement)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$P4excitement)$estimate),2)
+p <- round(cor.test(df$gZ, df$P4excitement)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=P4excitement)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P4 excitement \n (",
+                  round(sum(is.na(df$P4excitement))/
+                        (sum(is.na(df$P4excitement))+
+                           sum(!is.na(df$P4excitement)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$P4excitement)$estimate),2)
+p <- round(cor.test(df$gZ, df$P4excitement)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=P4excitement)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P4 excitement \n (",
+                  round(sum(is.na(df$P4excitement))/
+                        (sum(is.na(df$P4excitement))+
+                           sum(!is.na(df$P4excitement)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## P5 grandiosity
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - P5grandiosity
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$P5grandiosity)$estimate),2)
+p <- round(cor.test(df$gZ, df$P5grandiosity)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=P5grandiosity)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P5 grandiosity \n (",
+                  round(sum(is.na(df$P5grandiosity))/
+                        (sum(is.na(df$P5grandiosity))+
+                           sum(!is.na(df$P5grandiosity)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$P5grandiosity)$estimate),2)
+p <- round(cor.test(df$gZ, df$P5grandiosity)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=P5grandiosity)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P5 grandiosity \n (",
+                  round(sum(is.na(df$P5grandiosity))/
+                        (sum(is.na(df$P5grandiosity))+
+                           sum(!is.na(df$P5grandiosity)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$P5grandiosity)$estimate),2)
+p <- round(cor.test(df$gZ, df$P5grandiosity)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=P5grandiosity)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P5 grandiosity \n (",
+                  round(sum(is.na(df$P5grandiosity))/
+                        (sum(is.na(df$P5grandiosity))+
+                           sum(!is.na(df$P5grandiosity)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## P6 suspiciousness persecution
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - P6suspiciousness_persecution
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$P6suspiciousness_persecution)$estimate),2)
+p <- round(cor.test(df$gZ, df$P6suspiciousness_persecution)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=P6suspiciousness_persecution)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P6 suspiciousness persecution \n (",
+                  round(sum(is.na(df$P6suspiciousness_persecution))/
+                        (sum(is.na(df$P6suspiciousness_persecution))+
+                           sum(!is.na(df$P6suspiciousness_persecution)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$P6suspiciousness_persecution)$estimate),2)
+p <- round(cor.test(df$gZ, df$P6suspiciousness_persecution)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=P6suspiciousness_persecution)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P6 suspiciousness persecution \n (",
+                  round(sum(is.na(df$P6suspiciousness_persecution))/
+                        (sum(is.na(df$P6suspiciousness_persecution))+
+                           sum(!is.na(df$P6suspiciousness_persecution)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$P6suspiciousness_persecution)$estimate),2)
+p <- round(cor.test(df$gZ, df$P6suspiciousness_persecution)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=P6suspiciousness_persecution)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P6 suspiciousness persecution \n (",
+                  round(sum(is.na(df$P6suspiciousness_persecution))/
+                        (sum(is.na(df$P6suspiciousness_persecution))+
+                           sum(!is.na(df$P6suspiciousness_persecution)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## P7 hostility
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - P7hostility
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$P7hostility)$estimate),2)
+p <- round(cor.test(df$gZ, df$P7hostility)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=P7hostility)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P7 hostility \n (",
+                  round(sum(is.na(df$P7hostility))/
+                        (sum(is.na(df$P7hostility))+
+                           sum(!is.na(df$P7hostility)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$P7hostility)$estimate),2)
+p <- round(cor.test(df$gZ, df$P7hostility)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=P7hostility)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P7 hostility \n (",
+                  round(sum(is.na(df$P7hostility))/
+                        (sum(is.na(df$P7hostility))+
+                           sum(!is.na(df$P7hostility)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$P7hostility)$estimate),2)
+p <- round(cor.test(df$gZ, df$P7hostility)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=P7hostility)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("P7 hostility \n (",
+                  round(sum(is.na(df$P7hostility))/
+                        (sum(is.na(df$P7hostility))+
+                           sum(!is.na(df$P7hostility)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## N1 blunted affect
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - N1blunted_affect
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$N1blunted_affect)$estimate),2)
+p <- round(cor.test(df$gZ, df$N1blunted_affect)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=N1blunted_affect)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N1 blunted affect \n (",
+                  round(sum(is.na(df$N1blunted_affect))/
+                        (sum(is.na(df$N1blunted_affect))+
+                           sum(!is.na(df$N1blunted_affect)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$N1blunted_affect)$estimate),2)
+p <- round(cor.test(df$gZ, df$N1blunted_affect)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=N1blunted_affect)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N1 blunted affect \n (",
+                  round(sum(is.na(df$N1blunted_affect))/
+                        (sum(is.na(df$N1blunted_affect))+
+                           sum(!is.na(df$N1blunted_affect)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$N1blunted_affect)$estimate),2)
+p <- round(cor.test(df$gZ, df$N1blunted_affect)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=N1blunted_affect)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N1 blunted affect \n (",
+                  round(sum(is.na(df$N1blunted_affect))/
+                        (sum(is.na(df$N1blunted_affect))+
+                           sum(!is.na(df$N1blunted_affect)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## N2 emotional withdrawal
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - N2emotional_withdrawal
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$N2emotional_withdrawal)$estimate),2)
+p <- round(cor.test(df$gZ, df$N2emotional_withdrawal)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=N2emotional_withdrawal)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N2 emotional withdrawal \n (",
+                  round(sum(is.na(df$N2emotional_withdrawal))/
+                        (sum(is.na(df$N2emotional_withdrawal))+
+                           sum(!is.na(df$N2emotional_withdrawal)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$N2emotional_withdrawal)$estimate),2)
+p <- round(cor.test(df$gZ, df$N2emotional_withdrawal)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=N2emotional_withdrawal)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N2 emotional withdrawal \n (",
+                  round(sum(is.na(df$N2emotional_withdrawal))/
+                        (sum(is.na(df$N2emotional_withdrawal))+
+                           sum(!is.na(df$N2emotional_withdrawal)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$N2emotional_withdrawal)$estimate),2)
+p <- round(cor.test(df$gZ, df$N2emotional_withdrawal)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=N2emotional_withdrawal)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N2 emotional withdrawal \n (",
+                  round(sum(is.na(df$N2emotional_withdrawal))/
+                        (sum(is.na(df$N2emotional_withdrawal))+
+                           sum(!is.na(df$N2emotional_withdrawal)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## N3poor_rapport
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - N3poor_rapport
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$N3poor_rapport)$estimate),2)
+p <- round(cor.test(df$gZ, df$N3poor_rapport)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=N3poor_rapport)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N3poor_rapport \n (",
+                  round(sum(is.na(df$N3poor_rapport))/
+                        (sum(is.na(df$N3poor_rapport))+
+                           sum(!is.na(df$N3poor_rapport)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$N3poor_rapport)$estimate),2)
+p <- round(cor.test(df$gZ, df$N3poor_rapport)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=N3poor_rapport)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N3poor_rapport \n (",
+                  round(sum(is.na(df$N3poor_rapport))/
+                        (sum(is.na(df$N3poor_rapport))+
+                           sum(!is.na(df$N3poor_rapport)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$N3poor_rapport)$estimate),2)
+p <- round(cor.test(df$gZ, df$N3poor_rapport)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=N3poor_rapport)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N3poor_rapport \n (",
+                  round(sum(is.na(df$N3poor_rapport))/
+                        (sum(is.na(df$N3poor_rapport))+
+                           sum(!is.na(df$N3poor_rapport)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## N4passive_apathetic_social
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - N4passive_apathetic_social
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$N4passive_apathetic_social)$estimate),2)
+p <- round(cor.test(df$gZ, df$N4passive_apathetic_social)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=N4passive_apathetic_social)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N4passive_apathetic_social \n (",
+                  round(sum(is.na(df$N4passive_apathetic_social))/
+                        (sum(is.na(df$N4passive_apathetic_social))+
+                           sum(!is.na(df$N4passive_apathetic_social)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$N4passive_apathetic_social)$estimate),2)
+p <- round(cor.test(df$gZ, df$N4passive_apathetic_social)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=N4passive_apathetic_social)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N4passive_apathetic_social \n (",
+                  round(sum(is.na(df$N4passive_apathetic_social))/
+                        (sum(is.na(df$N4passive_apathetic_social))+
+                           sum(!is.na(df$N4passive_apathetic_social)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$N4passive_apathetic_social)$estimate),2)
+p <- round(cor.test(df$gZ, df$N4passive_apathetic_social)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=N4passive_apathetic_social)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N4passive_apathetic_social \n (",
+                  round(sum(is.na(df$N4passive_apathetic_social))/
+                        (sum(is.na(df$N4passive_apathetic_social))+
+                           sum(!is.na(df$N4passive_apathetic_social)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## N5difficulty_abstract_thinking
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - N5difficulty_abstract_thinking
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$N5difficulty_abstract_thinking)$estimate),2)
+p <- round(cor.test(df$gZ, df$N5difficulty_abstract_thinking)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=N5difficulty_abstract_thinking)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N5difficulty_abstract_thinking \n (",
+                  round(sum(is.na(df$N5difficulty_abstract_thinking))/
+                        (sum(is.na(df$N5difficulty_abstract_thinking))+
+                           sum(!is.na(df$N5difficulty_abstract_thinking)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$N5difficulty_abstract_thinking)$estimate),2)
+p <- round(cor.test(df$gZ, df$N5difficulty_abstract_thinking)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=N5difficulty_abstract_thinking)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N5difficulty_abstract_thinking \n (",
+                  round(sum(is.na(df$N5difficulty_abstract_thinking))/
+                        (sum(is.na(df$N5difficulty_abstract_thinking))+
+                           sum(!is.na(df$N5difficulty_abstract_thinking)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$N5difficulty_abstract_thinking)$estimate),2)
+p <- round(cor.test(df$gZ, df$N5difficulty_abstract_thinking)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=N5difficulty_abstract_thinking)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N5difficulty_abstract_thinking \n (",
+                  round(sum(is.na(df$N5difficulty_abstract_thinking))/
+                        (sum(is.na(df$N5difficulty_abstract_thinking))+
+                           sum(!is.na(df$N5difficulty_abstract_thinking)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## N6lack_of_spontaneity
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - N6lack_of_spontaneity
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$N6lack_of_spontaneity)$estimate),2)
+p <- round(cor.test(df$gZ, df$N6lack_of_spontaneity)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=N6lack_of_spontaneity)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N6lack_of_spontaneity \n (",
+                  round(sum(is.na(df$N6lack_of_spontaneity))/
+                        (sum(is.na(df$N6lack_of_spontaneity))+
+                           sum(!is.na(df$N6lack_of_spontaneity)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$N6lack_of_spontaneity)$estimate),2)
+p <- round(cor.test(df$gZ, df$N6lack_of_spontaneity)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=N6lack_of_spontaneity)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N6lack_of_spontaneity \n (",
+                  round(sum(is.na(df$N6lack_of_spontaneity))/
+                        (sum(is.na(df$N6lack_of_spontaneity))+
+                           sum(!is.na(df$N6lack_of_spontaneity)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$N6lack_of_spontaneity)$estimate),2)
+p <- round(cor.test(df$gZ, df$N6lack_of_spontaneity)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=N6lack_of_spontaneity)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N6lack_of_spontaneity \n (",
+                  round(sum(is.na(df$N6lack_of_spontaneity))/
+                        (sum(is.na(df$N6lack_of_spontaneity))+
+                           sum(!is.na(df$N6lack_of_spontaneity)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## N7stereotyping_thinking
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - N7stereotyping_thinking
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$N7stereotyping_thinking)$estimate),2)
+p <- round(cor.test(df$gZ, df$N7stereotyping_thinking)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=N7stereotyping_thinking)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N7stereotyping_thinking \n (",
+                  round(sum(is.na(df$N7stereotyping_thinking))/
+                        (sum(is.na(df$N7stereotyping_thinking))+
+                           sum(!is.na(df$N7stereotyping_thinking)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$N7stereotyping_thinking)$estimate),2)
+p <- round(cor.test(df$gZ, df$N7stereotyping_thinking)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=N7stereotyping_thinking)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N7stereotyping_thinking \n (",
+                  round(sum(is.na(df$N7stereotyping_thinking))/
+                        (sum(is.na(df$N7stereotyping_thinking))+
+                           sum(!is.na(df$N7stereotyping_thinking)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$N7stereotyping_thinking)$estimate),2)
+p <- round(cor.test(df$gZ, df$N7stereotyping_thinking)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=N7stereotyping_thinking)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("N7stereotyping_thinking \n (",
+                  round(sum(is.na(df$N7stereotyping_thinking))/
+                        (sum(is.na(df$N7stereotyping_thinking))+
+                           sum(!is.na(df$N7stereotyping_thinking)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G1somatic_concern
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G1somatic_concern
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G1somatic_concern)$estimate),2)
+p <- round(cor.test(df$gZ, df$G1somatic_concern)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G1somatic_concern)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G1somatic_concern \n (",
+                  round(sum(is.na(df$G1somatic_concern))/
+                        (sum(is.na(df$G1somatic_concern))+
+                           sum(!is.na(df$G1somatic_concern)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G1somatic_concern)$estimate),2)
+p <- round(cor.test(df$gZ, df$G1somatic_concern)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G1somatic_concern)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G1somatic_concern \n (",
+                  round(sum(is.na(df$G1somatic_concern))/
+                        (sum(is.na(df$G1somatic_concern))+
+                           sum(!is.na(df$G1somatic_concern)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G1somatic_concern)$estimate),2)
+p <- round(cor.test(df$gZ, df$G1somatic_concern)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G1somatic_concern)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G1somatic_concern \n (",
+                  round(sum(is.na(df$G1somatic_concern))/
+                        (sum(is.na(df$G1somatic_concern))+
+                           sum(!is.na(df$G1somatic_concern)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G2anxiety
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G2anxiety
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G2anxiety)$estimate),2)
+p <- round(cor.test(df$gZ, df$G2anxiety)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G2anxiety)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G2anxiety \n (",
+                  round(sum(is.na(df$G2anxiety))/
+                        (sum(is.na(df$G2anxiety))+
+                           sum(!is.na(df$G2anxiety)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G2anxiety)$estimate),2)
+p <- round(cor.test(df$gZ, df$G2anxiety)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G2anxiety)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G2anxiety \n (",
+                  round(sum(is.na(df$G2anxiety))/
+                        (sum(is.na(df$G2anxiety))+
+                           sum(!is.na(df$G2anxiety)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G2anxiety)$estimate),2)
+p <- round(cor.test(df$gZ, df$G2anxiety)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G2anxiety)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G2anxiety \n (",
+                  round(sum(is.na(df$G2anxiety))/
+                        (sum(is.na(df$G2anxiety))+
+                           sum(!is.na(df$G2anxiety)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G3guilt_feelings
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G3guilt_feelings
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G3guilt_feelings)$estimate),2)
+p <- round(cor.test(df$gZ, df$G3guilt_feelings)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G3guilt_feelings)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G3guilt_feelings \n (",
+                  round(sum(is.na(df$G3guilt_feelings))/
+                        (sum(is.na(df$G3guilt_feelings))+
+                           sum(!is.na(df$G3guilt_feelings)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G3guilt_feelings)$estimate),2)
+p <- round(cor.test(df$gZ, df$G3guilt_feelings)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G3guilt_feelings)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G3guilt_feelings \n (",
+                  round(sum(is.na(df$G3guilt_feelings))/
+                        (sum(is.na(df$G3guilt_feelings))+
+                           sum(!is.na(df$G3guilt_feelings)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G3guilt_feelings)$estimate),2)
+p <- round(cor.test(df$gZ, df$G3guilt_feelings)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G3guilt_feelings)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G3guilt_feelings \n (",
+                  round(sum(is.na(df$G3guilt_feelings))/
+                        (sum(is.na(df$G3guilt_feelings))+
+                           sum(!is.na(df$G3guilt_feelings)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G4tension
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G4tension
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G4tension)$estimate),2)
+p <- round(cor.test(df$gZ, df$G4tension)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G4tension)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G4tension \n (",
+                  round(sum(is.na(df$G4tension))/
+                        (sum(is.na(df$G4tension))+
+                           sum(!is.na(df$G4tension)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G4tension)$estimate),2)
+p <- round(cor.test(df$gZ, df$G4tension)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G4tension)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G4tension \n (",
+                  round(sum(is.na(df$G4tension))/
+                        (sum(is.na(df$G4tension))+
+                           sum(!is.na(df$G4tension)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G4tension)$estimate),2)
+p <- round(cor.test(df$gZ, df$G4tension)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G4tension)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G4tension \n (",
+                  round(sum(is.na(df$G4tension))/
+                        (sum(is.na(df$G4tension))+
+                           sum(!is.na(df$G4tension)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G5mannerism_and_posturing
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G5mannerism_and_posturing
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G5mannerism_and_posturing)$estimate),2)
+p <- round(cor.test(df$gZ, df$G5mannerism_and_posturing)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G5mannerism_and_posturing)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G5mannerism_and_posturing \n (",
+                  round(sum(is.na(df$G5mannerism_and_posturing))/
+                        (sum(is.na(df$G5mannerism_and_posturing))+
+                           sum(!is.na(df$G5mannerism_and_posturing)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G5mannerism_and_posturing)$estimate),2)
+p <- round(cor.test(df$gZ, df$G5mannerism_and_posturing)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G5mannerism_and_posturing)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G5mannerism_and_posturing \n (",
+                  round(sum(is.na(df$G5mannerism_and_posturing))/
+                        (sum(is.na(df$G5mannerism_and_posturing))+
+                           sum(!is.na(df$G5mannerism_and_posturing)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G5mannerism_and_posturing)$estimate),2)
+p <- round(cor.test(df$gZ, df$G5mannerism_and_posturing)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G5mannerism_and_posturing)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G5mannerism_and_posturing \n (",
+                  round(sum(is.na(df$G5mannerism_and_posturing))/
+                        (sum(is.na(df$G5mannerism_and_posturing))+
+                           sum(!is.na(df$G5mannerism_and_posturing)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G6depression
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G6depression
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G6depression)$estimate),2)
+p <- round(cor.test(df$gZ, df$G6depression)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G6depression)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G6depression \n (",
+                  round(sum(is.na(df$G6depression))/
+                        (sum(is.na(df$G6depression))+
+                           sum(!is.na(df$G6depression)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G6depression)$estimate),2)
+p <- round(cor.test(df$gZ, df$G6depression)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G6depression)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G6depression \n (",
+                  round(sum(is.na(df$G6depression))/
+                        (sum(is.na(df$G6depression))+
+                           sum(!is.na(df$G6depression)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G6depression)$estimate),2)
+p <- round(cor.test(df$gZ, df$G6depression)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G6depression)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G6depression \n (",
+                  round(sum(is.na(df$G6depression))/
+                        (sum(is.na(df$G6depression))+
+                           sum(!is.na(df$G6depression)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G7motor_retardation
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G7motor_retardation
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G7motor_retardation)$estimate),2)
+p <- round(cor.test(df$gZ, df$G7motor_retardation)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G7motor_retardation)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G7motor_retardation \n (",
+                  round(sum(is.na(df$G7motor_retardation))/
+                        (sum(is.na(df$G7motor_retardation))+
+                           sum(!is.na(df$G7motor_retardation)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G7motor_retardation)$estimate),2)
+p <- round(cor.test(df$gZ, df$G7motor_retardation)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G7motor_retardation)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G7motor_retardation \n (",
+                  round(sum(is.na(df$G7motor_retardation))/
+                        (sum(is.na(df$G7motor_retardation))+
+                           sum(!is.na(df$G7motor_retardation)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G7motor_retardation)$estimate),2)
+p <- round(cor.test(df$gZ, df$G7motor_retardation)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G7motor_retardation)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G7motor_retardation \n (",
+                  round(sum(is.na(df$G7motor_retardation))/
+                        (sum(is.na(df$G7motor_retardation))+
+                           sum(!is.na(df$G7motor_retardation)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G8uncooperativeness
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G8uncooperativeness
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G8uncooperativeness)$estimate),2)
+p <- round(cor.test(df$gZ, df$G8uncooperativeness)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G8uncooperativeness)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G8uncooperativeness \n (",
+                  round(sum(is.na(df$G8uncooperativeness))/
+                        (sum(is.na(df$G8uncooperativeness))+
+                           sum(!is.na(df$G8uncooperativeness)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G8uncooperativeness)$estimate),2)
+p <- round(cor.test(df$gZ, df$G8uncooperativeness)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G8uncooperativeness)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G8uncooperativeness \n (",
+                  round(sum(is.na(df$G8uncooperativeness))/
+                        (sum(is.na(df$G8uncooperativeness))+
+                           sum(!is.na(df$G8uncooperativeness)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G8uncooperativeness)$estimate),2)
+p <- round(cor.test(df$gZ, df$G8uncooperativeness)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G8uncooperativeness)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G8uncooperativeness \n (",
+                  round(sum(is.na(df$G8uncooperativeness))/
+                        (sum(is.na(df$G8uncooperativeness))+
+                           sum(!is.na(df$G8uncooperativeness)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G9unusualthought_content
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G9unusualthought_content
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G9unusualthought_content)$estimate),2)
+p <- round(cor.test(df$gZ, df$G9unusualthought_content)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G9unusualthought_content)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G9unusualthought_content \n (",
+                  round(sum(is.na(df$G9unusualthought_content))/
+                        (sum(is.na(df$G9unusualthought_content))+
+                           sum(!is.na(df$G9unusualthought_content)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G9unusualthought_content)$estimate),2)
+p <- round(cor.test(df$gZ, df$G9unusualthought_content)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G9unusualthought_content)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G9unusualthought_content \n (",
+                  round(sum(is.na(df$G9unusualthought_content))/
+                        (sum(is.na(df$G9unusualthought_content))+
+                           sum(!is.na(df$G9unusualthought_content)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G9unusualthought_content)$estimate),2)
+p <- round(cor.test(df$gZ, df$G9unusualthought_content)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G9unusualthought_content)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G9unusualthought_content \n (",
+                  round(sum(is.na(df$G9unusualthought_content))/
+                        (sum(is.na(df$G9unusualthought_content))+
+                           sum(!is.na(df$G9unusualthought_content)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G10disorientation
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G10disorientation
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G10disorientation)$estimate),2)
+p <- round(cor.test(df$gZ, df$G10disorientation)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G10disorientation)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G10disorientation \n (",
+                  round(sum(is.na(df$G10disorientation))/
+                        (sum(is.na(df$G10disorientation))+
+                           sum(!is.na(df$G10disorientation)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G10disorientation)$estimate),2)
+p <- round(cor.test(df$gZ, df$G10disorientation)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G10disorientation)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G10disorientation \n (",
+                  round(sum(is.na(df$G10disorientation))/
+                        (sum(is.na(df$G10disorientation))+
+                           sum(!is.na(df$G10disorientation)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G10disorientation)$estimate),2)
+p <- round(cor.test(df$gZ, df$G10disorientation)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G10disorientation)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G10disorientation \n (",
+                  round(sum(is.na(df$G10disorientation))/
+                        (sum(is.na(df$G10disorientation))+
+                           sum(!is.na(df$G10disorientation)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G11poor_attention
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G11poor_attention
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G11poor_attention)$estimate),2)
+p <- round(cor.test(df$gZ, df$G11poor_attention)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G11poor_attention)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G11poor_attention \n (",
+                  round(sum(is.na(df$G11poor_attention))/
+                        (sum(is.na(df$G11poor_attention))+
+                           sum(!is.na(df$G11poor_attention)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G11poor_attention)$estimate),2)
+p <- round(cor.test(df$gZ, df$G11poor_attention)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G11poor_attention)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G11poor_attention \n (",
+                  round(sum(is.na(df$G11poor_attention))/
+                        (sum(is.na(df$G11poor_attention))+
+                           sum(!is.na(df$G11poor_attention)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G11poor_attention)$estimate),2)
+p <- round(cor.test(df$gZ, df$G11poor_attention)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G11poor_attention)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G11poor_attention \n (",
+                  round(sum(is.na(df$G11poor_attention))/
+                        (sum(is.na(df$G11poor_attention))+
+                           sum(!is.na(df$G11poor_attention)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G12lack_of_judgement_and_insight
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G12lack_of_judgement_and_insight
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G12lack_of_judgement_and_insight)$estimate),2)
+p <- round(cor.test(df$gZ, df$G12lack_of_judgement_and_insight)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G12lack_of_judgement_and_insight)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G12lack_of_judgement_and_insight \n (",
+                  round(sum(is.na(df$G12lack_of_judgement_and_insight))/
+                        (sum(is.na(df$G12lack_of_judgement_and_insight))+
+                           sum(!is.na(df$G12lack_of_judgement_and_insight)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G12lack_of_judgement_and_insight)$estimate),2)
+p <- round(cor.test(df$gZ, df$G12lack_of_judgement_and_insight)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G12lack_of_judgement_and_insight)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G12lack_of_judgement_and_insight \n (",
+                  round(sum(is.na(df$G12lack_of_judgement_and_insight))/
+                        (sum(is.na(df$G12lack_of_judgement_and_insight))+
+                           sum(!is.na(df$G12lack_of_judgement_and_insight)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G12lack_of_judgement_and_insight)$estimate),2)
+p <- round(cor.test(df$gZ, df$G12lack_of_judgement_and_insight)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G12lack_of_judgement_and_insight)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G12lack_of_judgement_and_insight \n (",
+                  round(sum(is.na(df$G12lack_of_judgement_and_insight))/
+                        (sum(is.na(df$G12lack_of_judgement_and_insight))+
+                           sum(!is.na(df$G12lack_of_judgement_and_insight)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G13disturbance_of_volition
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G13disturbance_of_volition
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G13disturbance_of_volition)$estimate),2)
+p <- round(cor.test(df$gZ, df$G13disturbance_of_volition)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G13disturbance_of_volition)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G13disturbance_of_volition \n (",
+                  round(sum(is.na(df$G13disturbance_of_volition))/
+                        (sum(is.na(df$G13disturbance_of_volition))+
+                           sum(!is.na(df$G13disturbance_of_volition)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G13disturbance_of_volition)$estimate),2)
+p <- round(cor.test(df$gZ, df$G13disturbance_of_volition)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G13disturbance_of_volition)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G13disturbance_of_volition \n (",
+                  round(sum(is.na(df$G13disturbance_of_volition))/
+                        (sum(is.na(df$G13disturbance_of_volition))+
+                           sum(!is.na(df$G13disturbance_of_volition)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G13disturbance_of_volition)$estimate),2)
+p <- round(cor.test(df$gZ, df$G13disturbance_of_volition)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G13disturbance_of_volition)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G13disturbance_of_volition \n (",
+                  round(sum(is.na(df$G13disturbance_of_volition))/
+                        (sum(is.na(df$G13disturbance_of_volition))+
+                           sum(!is.na(df$G13disturbance_of_volition)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
+\newpage
+## Correlating the global Z-score with clinical variables (by timepoint)
+## G14poor_impulse_control
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA, fig.width  = 10, fig.height = 10}
+# Global deviance - G14poor_impulse_control
+# TIMEPOINT 1
+df <- subset(df_tps, timepoint==1)
+r <- round(as.numeric(cor.test(df$gZ, df$G14poor_impulse_control)$estimate),2)
+p <- round(cor.test(df$gZ, df$G14poor_impulse_control)$p.value,2)
+p1 <- ggplot(df, aes(x=gZ, y=G14poor_impulse_control)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G14poor_impulse_control \n (",
+                  round(sum(is.na(df$G14poor_impulse_control))/
+                        (sum(is.na(df$G14poor_impulse_control))+
+                           sum(!is.na(df$G14poor_impulse_control)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 1, patients r=",r,", p=",p))
+
+# TIMEPOINT 2
+df <- subset(df_tps, timepoint==2)
+r <- round(as.numeric(cor.test(df$gZ, df$G14poor_impulse_control)$estimate),2)
+p <- round(cor.test(df$gZ, df$G14poor_impulse_control)$p.value,2)
+p2 <- ggplot(df, aes(x=gZ, y=G14poor_impulse_control)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G14poor_impulse_control \n (",
+                  round(sum(is.na(df$G14poor_impulse_control))/
+                        (sum(is.na(df$G14poor_impulse_control))+
+                           sum(!is.na(df$G14poor_impulse_control)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 2, patients r=",r,", p=",p))
+
+# TIMEPOINT 3
+df <- subset(df_tps, timepoint==3)
+r <- round(as.numeric(cor.test(df$gZ, df$G14poor_impulse_control)$estimate),2)
+p <- round(cor.test(df$gZ, df$G14poor_impulse_control)$p.value,2)
+p3 <- ggplot(df, aes(x=gZ, y=G14poor_impulse_control)) +
+  geom_point(col="green4") + 
+  geom_smooth(method="lm", col="black") + 
+  theme_bw() +
+  labs(x = "Global deviance score",
+       y = paste0("G14poor_impulse_control \n (",
+                  round(sum(is.na(df$G14poor_impulse_control))/
+                        (sum(is.na(df$G14poor_impulse_control))+
+                           sum(!is.na(df$G14poor_impulse_control)))*100,2),
+                  "% NA values)"),
+       title = paste0("Timepoint 3, patients r=",r,", p=",p))
+
+ggarrange(p1, p2, p3, ncol = 1, nrow = 3)
+rm(df, p1, p2, p3, p, r)
+```
+
