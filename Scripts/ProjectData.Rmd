@@ -1,0 +1,84 @@
+---
+title: "Data preparation"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r, warning=F, message = F, echo = FALSE}
+#install.packages("easypackages")
+library("easypackages")
+
+list.of.packages <- c("tidyverse", "MatchIt", 
+                      "nlme", "JMbayes", "plyr",
+                      "BiocManager", "dplyr",
+                      "devtools", "longCombat", 
+                      "tinytex", "knitr", "Rmisc", 
+                      "effectsize", "tidyr",
+                      "Hmisc", "kableExtra")
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+  if(length(new.packages)>0) { install.packages(new.packages)}
+
+libraries(list.of.packages)
+rm(list.of.packages, new.packages)
+```
+
+```{r, warning=F, message = F, echo = FALSE}
+setwd("/data_J/Scripts")
+source("1_DataPreparation.R")
+```
+
+Two different parcellations were used when processing the brain magnetic resonance images. The covariates are stored in two datasets (planU_morphosim_rawdatabase.csv and planU_euler.csv), and the info of each parcellation scheme is organised as follows:
+
+* **68 regions parcellation**: images are processed so that each brain hemisphere is divided into 34 regions. We have the cortical thickness measure for each brain region for each subject stored in two datasets (lh.aparc.thickness.csv, rh.aparc.thickness.csv), one corresponding to each brain hemisphere. The same for the volume measure.
+
+* **308 regions parcellation**: images are processed so that the whole brain is divided into 308 equally sized regions. We do also have the cortical thickness measure for each brain region for each subject stored, this time, in a single dataset (planU_morphosim_rawdatabase.csv). The same for the volume measure.
+
+The getData() function merges the different datasets to get a final one with all the covariates and features. We can choose whether to obtain the 68 regions parcellation dataset or the 308 one. 
+
+
+In the following, we apply said function to obtain both raw-datasets: 
+
+```{r echo = T, results = 'hide'}
+df_68 <- getData("68")
+df_308 <- getData("308")
+#measure <- "CT"
+measure <- "Vol"
+```
+
+We also built the DataPreprocessing() function, which aims to do all the first preprocessing steps. In the following, we apply the above-mentioned function in various ways: 
+
+
+```{r echo = T, results = 'hide'}
+### 68 REG PARC, NO MATCH IT
+df_68_Combat <- DataPreprocessing(df = df_68,
+                parc = "68",
+                measure = measure,
+                harmonization = T,
+                match = F)
+
+### 308 REG PARC, NO MATCH IT
+df_308_Combat <- DataPreprocessing(df = df_308,
+                 parc = "308",
+                 measure = measure,
+                 harmonization = T,
+                 match = F)
+
+### 68 REG PARC, MATCH IT
+df_68_Combat_Match <- DataPreprocessing(df = df_68,
+                      parc = "68",
+                      measure = measure,
+                      harmonization = T,
+                      match = T)
+
+### 308 REG PARC, MATCH IT
+df_308_Combat_Match <- DataPreprocessing(df = df_308,
+                       parc = "308",
+                       measure = measure,
+                       harmonization = T,
+                       match = T)
+```
