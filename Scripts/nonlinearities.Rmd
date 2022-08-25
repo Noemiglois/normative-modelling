@@ -1,0 +1,260 @@
+---
+title: "Optimal regression covariates"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+html_document: default
+---
+  
+```{r, warning=F, message = F, echo = FALSE}
+#install.packages("easypackages")
+library("easypackages")
+
+
+list.of.packages <- c("viridis", "tidyverse", "MatchIt", "grid", "png", 
+                      "gridExtra", "parallel", "nlme", "JMbayes", "plyr",
+                      "BiocManager", "Biostrings", "lme4", "ggplot2", "dplyr",
+                      "Hmisc", "devtools", "longCombat", "neuroCombat", 
+                      "tinytex", "knitr", "ggExtra", "leaps",
+                      "Rmisc", "doParallel", "hrbrthemes", "cowplot", 
+                      "BiocParallel", "effectsize", "ggpubr", "stats")
+
+
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+if(length(new.packages)>0) { install.packages(new.packages)}
+
+libraries(list.of.packages)
+rm(list.of.packages, new.packages)
+```
+
+
+```{r, warning=F, message = F, echo = FALSE}
+setwd("/data_J/Scripts")
+source("1_DataPreparation.R")
+```
+
+
+```{r include=FALSE}
+df_68 <- getData("68")
+df_308 <- getData("308")
+measure <- "CT"
+```
+
+
+```{r include=FALSE}
+### 68 REG PARC, NO MATCH IT
+df_68_Combat <- DataPreprocessing(df = df_68,
+                                  parc = "68",
+                                  measure = measure,
+                                  harmonization = T,
+                                  match = F)
+
+### 308 REG PARC, NO MATCH IT
+df_308_Combat <- DataPreprocessing(df = df_308,
+                                   parc = "308",
+                                   measure = measure,
+                                   harmonization = T,
+                                   match = F)
+
+### 68 REG PARC, MATCH IT
+df_68_Combat_Match <- DataPreprocessing(df = df_68,
+                                        parc = "68",
+                                        measure = measure,
+                                        harmonization = T,
+                                        match = T)
+
+### 308 REG PARC, MATCH IT
+df_308_Combat_Match <- DataPreprocessing(df = df_308,
+                                         parc = "308",
+                                         measure = measure,
+                                         harmonization = T,
+                                         match = T)
+```
+
+```{r include=FALSE}
+#rm(list=setdiff(ls(), c("df_68_Combat", "measure")))
+```
+
+
+```{r include=FALSE}
+df <- df_68_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+
+data <- NULL
+for (i in 1:length(features)) {
+  df <- df_68_Combat
+  names(df)[names(df) == features[i]]   <- "y"
+  modelo_forward <- regsubsets(y ~ age + age2 + scode + euler, data=df, method='exhaustive')
+  # modelo_forward <- regsubsets(x = as.matrix(df[,c("age", "scode","age2", "euler")]), 
+  #                              y = df[,"y"], data=df, method='exhaustive', force.in=c(1,3))
+  resumen_forward <- summary(modelo_forward)
+  data <- rbind(data,resumen_forward$which[which.min(resumen_forward$bic),])
+}
+
+data1 <- NULL
+data1 <- rbind(data1, colnames(data)[2:5])
+data1 <- rbind(data1, c(paste0(round(sum(data[,2], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,3], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,4], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,5], na.rm = TRUE)/length(features)*100,2), "%")))
+data68_NoM <- data1
+
+regions_age2_68_NoM <-features[data[,3]]
+```
+
+
+```{r include=FALSE}
+df <- df_68_Combat_Match
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+
+data <- NULL
+for (i in 1:length(features)) {
+  df <- df_68_Combat_Match
+  names(df)[names(df) == features[i]]   <- "y"
+  modelo_forward <- regsubsets(y ~ age + age2 + scode + euler, data=df, method='exhaustive')
+  resumen_forward <- summary(modelo_forward)
+  data <- rbind(data,resumen_forward$which[which.min(resumen_forward$bic),])
+}
+
+data1 <- NULL
+data1 <- rbind(data1, colnames(data)[2:5])
+data1 <- rbind(data1, c(paste0(round(sum(data[,2], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,3], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,4], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,5], na.rm = TRUE)/length(features)*100,2), "%")))
+data68_M <- data1
+
+regions_age2_68_M <-features[data[,3]]
+```
+
+
+```{r include=FALSE}
+df <- df_308_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+
+data <- NULL
+for (i in 1:length(features)) {
+  df <- df_308_Combat
+  names(df)[names(df) == features[i]]   <- "y"
+  modelo_forward <- regsubsets(y ~ age + age2 + scode + euler, data=df, method='exhaustive')
+  resumen_forward <- summary(modelo_forward)
+  data <- rbind(data,resumen_forward$which[which.min(resumen_forward$bic),])
+}
+
+data1 <- NULL
+data1 <- rbind(data1, colnames(data)[2:5])
+data1 <- rbind(data1, c(paste0(round(sum(data[,2], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,3], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,4], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,5], na.rm = TRUE)/length(features)*100,2), "%")))
+data308_NoM <- data1
+
+regions_age2_308_NoM <-features[data[,3]]
+```
+
+
+```{r include=FALSE}
+df <- df_308_Combat_Match
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+
+data <- NULL
+for (i in 1:length(features)) {
+  df <- df_308_Combat_Match
+  names(df)[names(df) == features[i]]   <- "y"
+  modelo_forward <- regsubsets(y ~ age + age2 + scode + euler, data=df, method='exhaustive')
+  resumen_forward <- summary(modelo_forward)
+  data <- rbind(data,resumen_forward$which[which.min(resumen_forward$bic),])
+}
+
+data1 <- NULL
+data1 <- rbind(data1, colnames(data)[2:5])
+data1 <- rbind(data1, c(paste0(round(sum(data[,2], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,3], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,4], na.rm = TRUE)/length(features)*100,2), "%"),
+                        paste0(round(sum(data[,5], na.rm = TRUE)/length(features)*100,2), "%")))
+data308_M <- data1
+
+
+regions_age2_308_M <-features[data[,3]]
+```
+
+
+```{r echo=TRUE}
+##
+kable(data68_NoM)
+kable(data308_NoM)
+
+kable(data68_M)
+kable(data308_M)
+
+##
+length(regions_age2_68_NoM)
+length(regions_age2_308_NoM)
+
+length(regions_age2_68_M)
+length(regions_age2_308_M)
+
+##
+length(regions_age2_68_NoM[startsWith(regions_age2_68_NoM, 'lh')])
+length(regions_age2_68_NoM[startsWith(regions_age2_68_NoM, 'rh')])
+length(regions_age2_308_NoM[startsWith(regions_age2_308_NoM, 'lh')])
+length(regions_age2_308_NoM[startsWith(regions_age2_308_NoM, 'rh')])
+
+length(regions_age2_68_M[startsWith(regions_age2_68_M, 'lh')])
+length(regions_age2_68_M[startsWith(regions_age2_68_M, 'rh')])
+length(regions_age2_308_M[startsWith(regions_age2_308_M, 'lh')])
+length(regions_age2_308_M[startsWith(regions_age2_308_M, 'rh')])
+```
+
+```{r}
+# forward, backward, exhaustive
+df <- df_68_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure))) # features[5]
+mod_forward  <- regsubsets(lh_entorhinal_CT ~ age + age2 + age3 + scode + euler, data=df, method="forward")
+summ_forward <- summary(mod_forward)
+summ_forward$outmat
+```
+
+```{r}
+plot(summ_forward$bic, main = "Criterio BIC", xlab =" Número de variables ", 
+     ylab="BIC", type="l")
+plot(summ_forward$cp, main = "Criterio CP", xlab =" Número de variables ", 
+     ylab="CP", type="l")
+plot(summ_forward$adjr2, main = "Criterio R2", xlab =" Número de variables ", 
+     ylab="R2 ajustado", type="l")
+```
+
+
+
+
+
+```{r}
+df <- df_68_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+
+data <- NULL
+for (i in 1:length(features)) {
+  df <- df_68_Combat
+  names(df)[names(df) == features[i]]   <- "y"
+  mod_forward  <- regsubsets(y ~ age + age2 + age3 + scode + euler, data=df, method="forward")
+  summ_forward <- summary(mod_forward)
+  plot(summ_forward$bic, main = paste0("BIC, region ", features[i]), 
+       xlab =" # variables", ylab="BIC", type="l")
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
