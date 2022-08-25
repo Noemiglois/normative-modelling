@@ -1,0 +1,2122 @@
+---
+title: "COMPARISON"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r setup I, include=F}
+knitr::opts_chunk$set(
+  include = TRUE,  
+  echo=TRUE, 
+  eval=TRUE, 
+  warning=F, 
+  message = F,
+  cache = TRUE,
+  fig.width = 12,
+  fig.height = 8
+  )
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library("easypackages")
+
+list.of.packages <- c("knitr", "ggplot2", "caret", "scorer", "JMbayes", 
+                      "nlme", "dplyr", "tidyr", "cowplot")
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+  if(length(new.packages)>0) { install.packages(new.packages)}
+#devtools::install_github("paulhendricks/scorer")
+
+libraries(list.of.packages)
+rm(list.of.packages, new.packages)
+ncores <- detectCores()
+
+setwd("/data_J/Scripts")
+source("1_DataPreparation.R")
+```
+
+
+# COMPARISON OF DIFFERENT MODELS
+
+1. **Cross-sectional NM (linear model)**
+- Train: controls data from BL only (dcode=0, tp=1)
+- Test: controls data from BL only  (dcode=0, tp=1)
+  - Predict with the Predict function (only baseline)
+
+2. **Longitudinal NM (LME model)**
+- Train: controls data from all timepoints (dcode=0)
+- Test: controls data from BL only  (dcode=0, tp=1)
+  - Predict with both Predict function and DynamicPredictions  (only baseline)
+
+3. **Cross-sectional NM (non-linear model), by A.Marquand**
+- Train: controls data from BL only (dcode=0, tp=1)
+- Test: controls data from BL only  (dcode=0, tp=1)
+
+
+[(cross-val link)](https://boostedml.com/2019/09/linear-mixed-models-making-predictions-and-evaluating-accuracy.html)
+
+
+# Cross-sectional NM (linear model) and Longitudinal NM (LME model)
+
+The following function was created and used to train a linear model and a linear mixed effects model with 10 fold cross validation and to extract the predictions for each fold using traditional predictions (population level) and dynamic predictions (subject level).
+
+```{r}
+model_train_cv <- function(i, df, measure){
+  # We get the data from healthy subjects:
+  df_hc <- df[df[,"dcode"]==0, ] 
+
+  # We select region "i" and the relevant covariates
+  var_names<- c("age", "scode", "dcode", "euler", "subID", "timepoint")
+  reg_names  <- colnames(df%>%dplyr::select(ends_with(measure)))
+  df_hc <- df_hc[ , c(reg_names[i], var_names) ]
+  colnames(df_hc)[colnames(df_hc)==reg_names[i]]<-"reg"
+
+  # We get the unique identifiers from the healthy controls
+  ids <- unique(df_hc$subID)
+  # and we create 10 folds:
+  num_folds <- 10
+  set.seed(123) # for replicability
+  folds <- createFolds(ids, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # Empty structure to store the metrics:
+  predictions <- NULL
+  
+  # For each fold we do:
+  for(f in 1:num_folds){
+    # We get the train and test IDs corresponding to this fold
+    train_ids <- ids[folds[[f]]]
+    test_ids  <- ids[-folds[[f]]]
+    
+    # With those, we generate train/test partitions
+    train <- subset(df_hc, subID%in%train_ids)
+    test  <- subset(df_hc, subID%in%test_ids) # Unused 
+    # this specific partitions with only baseline subjects
+    train_bl <- subset(train, timepoint==1)
+    test_bl  <- subset(test,  timepoint==1)
+    
+    # We fit different models
+    # Linear model NM (cross-sectional)
+    CT_lm  <- lm(formula= reg~age+scode+euler, data= train_bl)
+    # Linear mixed effects model NM (longitudinal)
+    CT_lme <- lme(as.formula("reg ~ scode + age + euler"), 
+               random = ~ 1 + age|subID,
+               data   = train,
+               control= lmeControl(opt = 'optim', 
+                                   msMaxIter = 4000,
+                                   method = 'REML',
+                                   maxIter = 250))
+
+  # We make predictions for each healthy control in the test subset for this fold:
+  for(participant in test_ids){
+    prediction_subset <- subset(test_bl, subID==participant)
+    
+    # Traditional predict for the lm:
+    # (population level)
+    y_pred_lm  <- as.numeric(predict(CT_lm,  newdata=prediction_subset))
+    
+    # Traditional predict for the lmem, only considering fixed effects:
+    # (population level)
+    y_pred_lme <- as.numeric(predict(CT_lme, newdata=prediction_subset, level=0)) 
+    
+    # Dynamic predictions for the lmem, estimating the random effects as well:
+    # (subject level)
+    y_pred_lme_dynPred <- as.numeric(IndvPred_lme(CT_lme, newdata = prediction_subset,
+                                       all_times = F, timeVar = "age", M = 500, 
+                                       return_data = T)$pred[1])
+    
+    # True value for region i of this subject
+    y_true <- prediction_subset[['reg']]
+    
+    # For each subject, we store the MAE and MSE obtained from each prediction
+    predictions <- rbind(predictions, data.frame("fold"   = f,
+                                                 "region" = reg_names[i],
+                                                 "subID"  = participant,
+                                                 "y_true" = y_true,
+                                                 "y_pred_lm" = y_pred_lm,
+                                                 "y_pred_lme" = y_pred_lme,
+                                                 "y_pred_lme_dynPred" = y_pred_lme_dynPred))
+    }
+  }
+
+return(predictions)
+}
+```
+
+
+```{r eval=F, include=FALSE}
+df_68  <- getData(parc = "68")
+df_308 <- getData(parc = "308")
+
+###############################
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      harmonization = T,
+                      match = F)
+
+measure <- "CT_freesurfer"
+n <- length(colnames(df%>%dplyr::select(ends_with(measure))))
+perf_lm_lme_68NoM <- do.call(rbind, mclapply(1:n, model_train_cv,
+                                 df, measure,
+                                 mc.cores = ncores-1))
+
+###############################
+df <- DataPreparation(df = df_308,
+                      parc = "308",
+                      harmonization = T,
+                      match = F)
+measure <- "_thickness"
+n <- length(colnames(df%>%dplyr::select(ends_with(measure))))
+perf_lm_lme_308NoM <- do.call(rbind, mclapply(1:n, model_train_cv,
+                                 df, measure,
+                                 mc.cores = ncores-1))
+
+###############################
+
+# set.seed(123, kind = "L'Ecuyer-CMRG" )
+
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      harmonization = T,
+                      match = T)
+measure <- "CT_freesurfer"
+n <- length(colnames(df%>%dplyr::select(ends_with(measure))))
+
+perf_lm_lme_68M <- do.call(rbind, mclapply(1:n, model_train_cv,
+                                 df, measure,
+                                 mc.cores = ncores-1)) # mc.preschedule = FALSE
+
+# perf_lm_lme_68M <- do.call(rbind, lapply(1:n, model_train_cv,
+#                                  df, measure))
+# perf_lm_lme_68M[3865,1] # Error message
+
+###############################
+df <- DataPreparation(df = df_308,
+                      parc = "308",
+                      harmonization = T,
+                      match = T)
+
+measure <- "_thickness"
+n <- length(colnames(df%>%dplyr::select(ends_with(measure))))
+perf_lm_lme_308M <- do.call(rbind, mclapply(1:n, model_train_cv,
+                                 df, measure,
+                                 mc.cores = ncores-1))
+# perf_lm_lme_308M <- do.call(rbind, mclapply(1:n, model_train_cv,
+#                                  df, measure,
+#                                  mc.cores = ncores-1,
+#                                  mc.preschedule = FALSE))
+str(perf_lm_lme_308M)
+```
+
+```{r eval=F, include=FALSE}
+write.csv(perf_lm_lme_68NoM,"/data_J/Results/Files/model_comparison/performance_68NoM.csv", row.names = FALSE)
+write.csv(perf_lm_lme_308NoM,"/data_J/Results/Files/model_comparison/performance_308NoM.csv", row.names = FALSE)
+write.csv(perf_lm_lme_68M, "/data_J/Results/Files/model_comparison/performance_68M.csv", row.names = FALSE)
+write.csv(perf_lm_lme_308M, "/data_J/Results/Files/model_comparison/performance_308M.csv", row.names = FALSE)
+```
+
+# Cross-sectional NM (non-linear model), by A.Marquand
+
+First we created the input files. The text file should contain one entry (i.e. subject) per line, with columns space or tab separated and no headers.
+
+**CONTROLES**
+
+- **features_HC.txt**: (TARGETS: REGIONS)
+
+  - **NO Match-it** 293 filas, 14 columnas. En total 4.102 valores (293x14) 
+  
+  - **Match-it** 168 filas, 14 columnas. En total 2.352 valores (168x14) 
+
+
+```{r eval=FALSE, include=FALSE}
+#####
+df <- DataPreparation(parc = "parc68", 
+                      harmonization = "lC", 
+                      match = F)
+df_hc    <- subset(df, dcode==0) # CONTROLES
+df_hc_bl <- subset(df_hc, timepoint==1)
+# regs <- c("lh_inferiortemporal_CT_freesurfer", "lh_fusiform_CT_freesurfer", 
+#   "lh_inferiorparietal_CT_freesurfer", "lh_caudalmiddlefrontal_CT_freesurfer",
+#   "rh_lateraloccipital_CT_freesurfer", "rh_lateraloccipital_CT_freesurfer", 
+#   "rh_lingual_CT_freesurfer", "lh_transversetemporal_CT_freesurfer",
+#   "lh_isthmuscingulate_CT_freesurfer", "lh_medialorbitofrontal_CT_freesurfer",
+#   "rh_rostralmiddlefrontal_CT_freesurfer", "rh_precuneus_CT_freesurfer",
+#   "rh_superiortemporal_CT_freesurfer", "rh_precentral_CT_freesurfer") 
+regs <- colnames(df_hc_bl%>%dplyr::select(ends_with("CT_freesurfer")))
+  
+df_hc_bl_68 <- df_hc_bl[ , regs]
+write.table(df_hc_bl_68,
+            "/data_J/input_files_Marquand/68NoM/input/features_HC.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+#####
+df <- DataPreparation(parc = "parc308", 
+                      harmonization = "lC", 
+                      match = F)
+df_hc <- subset(df, dcode==0)
+df_hc_bl <- subset(df_hc, timepoint==1)
+# regs <- c("rh_superiortemporal_part1_thickness" , "lh_insula_part3_thickness" ,
+#           "rh_superiortemporal_part2_thickness", "lh_rostralmiddlefrontal_part4_thickness",
+#           "lh_inferiorparietal_part6_thickness" ,"rh_rostralmiddlefrontal_part6_thickness",
+#           "rh_rostralmiddlefrontal_part4_thickness", "rh_fusiform_part1_thickness",
+#           "rh_superiorfrontal_part6_thickness", "lh_temporalpole_part1_thickness",
+#           "rh_parahippocampal_part1_thickness" ,"lh_inferiortemporal_part4_thickness",
+#           "rh_postcentral_part2_thickness", "rh_lingual_part4_thickness")
+regs <- colnames(df_hc_bl%>%dplyr::select(ends_with("_thickness")))
+
+df_hc_bl_308 <- df_hc_bl[ ,regs]
+write.table(df_hc_bl_308,
+            "/data_J/input_files_Marquand/308NoM/input/features_HC.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+#####
+df <- DataPreparation(parc = "parc68", 
+                      harmonization = "lC", 
+                      match = T)
+df_hc <- subset(df, dcode==0)
+df_hc_bl <- subset(df_hc, timepoint==1)
+# regs <- c("lh_inferiortemporal_CT_freesurfer", "lh_fusiform_CT_freesurfer", 
+#   "lh_inferiorparietal_CT_freesurfer", "lh_caudalmiddlefrontal_CT_freesurfer",
+#   "rh_lateraloccipital_CT_freesurfer", "rh_lateraloccipital_CT_freesurfer", 
+#   "rh_lingual_CT_freesurfer", "lh_transversetemporal_CT_freesurfer",
+#   "lh_isthmuscingulate_CT_freesurfer", "lh_medialorbitofrontal_CT_freesurfer",
+#   "rh_rostralmiddlefrontal_CT_freesurfer", "rh_precuneus_CT_freesurfer",
+#   "rh_superiortemporal_CT_freesurfer", "rh_precentral_CT_freesurfer")
+regs <- colnames(df_hc_bl%>%dplyr::select(ends_with("CT_freesurfer")))
+
+df_hc_bl_68 <- df_hc_bl[ ,regs]
+write.table(df_hc_bl_68,
+            "/data_J/input_files_Marquand/68M/input/features_HC.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+#####
+df <- DataPreparation(parc = "parc308", 
+                      harmonization = "lC", 
+                      match = T)
+df_hc <- subset(df, dcode==0)
+df_hc_bl <- subset(df_hc, timepoint==1)
+# regs <- c("rh_superiortemporal_part1_thickness" , "lh_insula_part3_thickness" ,
+#           "rh_superiortemporal_part2_thickness", "lh_rostralmiddlefrontal_part4_thickness",
+#           "lh_inferiorparietal_part6_thickness" ,"rh_rostralmiddlefrontal_part6_thickness",
+#           "rh_rostralmiddlefrontal_part4_thickness", "rh_fusiform_part1_thickness",
+#           "rh_superiorfrontal_part6_thickness", "lh_temporalpole_part1_thickness",
+#           "rh_parahippocampal_part1_thickness" ,"lh_inferiortemporal_part4_thickness",
+#           "rh_postcentral_part2_thickness", "rh_lingual_part4_thickness")
+regs <- colnames(df_hc_bl%>%dplyr::select(ends_with("_thickness")))
+
+df_hc_bl_308 <- df_hc_bl[ ,regs]
+write.table(df_hc_bl_308,
+            "/data_J/input_files_Marquand/308M/input/features_HC.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+rm(df, df_hc, df_hc_bl, regs, df_hc_bl_308, df_hc_bl_68)
+```
+
+
+- **covariates_HC.txt**:  (VARIABLES REGRESORAS: AGE, SEX AND EULER)
+
+  - **NO Match-it** 293 filas, 3 columnas. En total 879 valores. 
+  
+  - **Match-it** 168 filas, 3 columnas. En total 504 valores.
+
+
+```{r eval=FALSE, include=FALSE}
+#####
+df <- DataPreparation(parc = "parc68", 
+                      harmonization = "lC", 
+                      match = F)
+df_hc <- subset(df, dcode==0)
+df_hc_bl <- subset(df_hc, timepoint==1)
+vars <- c("age", "euler", "scode")
+df_hc_bl_3 <- df_hc_bl[,vars]
+
+write.table(df_hc_bl_3,
+            "/data_J/input_files_Marquand/68NoM/input/covariates_HC.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+
+#####
+df <- DataPreparation(parc = "parc308", 
+                      harmonization = "lC", 
+                      match = F)
+df_hc <- subset(df, dcode==0)
+df_hc_bl <- subset(df_hc, timepoint==1)
+vars <- c("age", "euler", "scode")
+df_hc_bl_3 <- df_hc_bl[,vars]
+
+write.table(df_hc_bl_3,
+            "/data_J/input_files_Marquand/308NoM/input/covariates_HC.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+
+#####
+df <- DataPreparation(parc = "parc68", 
+                      harmonization = "lC", 
+                      match = T)
+df_hc <- subset(df, dcode==0)
+df_hc_bl <- subset(df_hc, timepoint==1)
+vars <- c("age", "euler", "scode")
+df_hc_bl_3 <- df_hc_bl[,vars]
+
+write.table(df_hc_bl_3,
+            "/data_J/input_files_Marquand/68M/input/covariates_HC.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+
+#####
+df <- DataPreparation(parc = "parc308", 
+                      harmonization = "lC", 
+                      match = T)
+df_hc <- subset(df, dcode==0)
+df_hc_bl <- subset(df_hc, timepoint==1)
+vars <- c("age", "euler", "scode")
+df_hc_bl_3 <- df_hc_bl[,vars]
+
+write.table(df_hc_bl_3,
+            "/data_J/input_files_Marquand/308M/input/covariates_HC.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+rm(df, df_hc,df_hc_bl, df_hc_bl_3, vars)
+```
+
+
+**PACIENTES**
+
+- **features_allpatients.txt**: (TARGETS: REGIONS)
+
+  - **NO Match-it** 168 filas, 14 columnas. En total 2.352 valores (168x14) 
+  
+  - **Match-it** 168 filas, 14 columnas. En total 2.352 valores (168x14) 
+
+```{r eval=FALSE, include=FALSE}
+#####
+df <- DataPreparation(parc = "parc68", 
+                      harmonization = "lC", 
+                      match = F)
+df_hc <- subset(df, dcode==1)
+df_hc_bl <- subset(df_hc, timepoint==1)
+# regs <- c("lh_inferiortemporal_CT_freesurfer", "lh_fusiform_CT_freesurfer", 
+#   "lh_inferiorparietal_CT_freesurfer", "lh_caudalmiddlefrontal_CT_freesurfer",
+#   "rh_lateraloccipital_CT_freesurfer", "rh_lateraloccipital_CT_freesurfer", 
+#   "rh_lingual_CT_freesurfer", "lh_transversetemporal_CT_freesurfer",
+#   "lh_isthmuscingulate_CT_freesurfer", "lh_medialorbitofrontal_CT_freesurfer",
+#   "rh_rostralmiddlefrontal_CT_freesurfer", "rh_precuneus_CT_freesurfer",
+#   "rh_superiortemporal_CT_freesurfer", "rh_precentral_CT_freesurfer")
+regs <- colnames(df_hc_bl%>%dplyr::select(ends_with("CT_freesurfer")))
+
+df_hc_bl_68 <- df_hc_bl[ ,regs]
+write.table(df_hc_bl_68,
+            "/data_J/input_files_Marquand/68NoM/input/features_allpatients.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+#####
+df <- DataPreparation(parc = "parc308", 
+                      harmonization = "lC", 
+                      match = F)
+df_hc <- subset(df, dcode==1)
+df_hc_bl <- subset(df_hc, timepoint==1)
+# regs <- c("rh_superiortemporal_part1_thickness" , "lh_insula_part3_thickness" ,
+#           "rh_superiortemporal_part2_thickness", "lh_rostralmiddlefrontal_part4_thickness",
+#           "lh_inferiorparietal_part6_thickness" ,"rh_rostralmiddlefrontal_part6_thickness",
+#           "rh_rostralmiddlefrontal_part4_thickness", "rh_fusiform_part1_thickness",
+#           "rh_superiorfrontal_part6_thickness", "lh_temporalpole_part1_thickness",
+#           "rh_parahippocampal_part1_thickness" ,"lh_inferiortemporal_part4_thickness",
+#           "rh_postcentral_part2_thickness", "rh_lingual_part4_thickness")
+regs <- colnames(df_hc_bl%>%dplyr::select(ends_with("_thickness")))
+
+df_hc_bl_308 <- df_hc_bl[ ,regs]
+write.table(df_hc_bl_308,
+            "/data_J/input_files_Marquand/308NoM/input/features_allpatients.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+#####
+df <- DataPreparation(parc = "parc68", 
+                      harmonization = "lC", 
+                      match = T)
+df_hc <- subset(df, dcode==1)
+df_hc_bl <- subset(df_hc, timepoint==1)
+# regs <- c("lh_inferiortemporal_CT_freesurfer", "lh_fusiform_CT_freesurfer", 
+#   "lh_inferiorparietal_CT_freesurfer", "lh_caudalmiddlefrontal_CT_freesurfer",
+#   "rh_lateraloccipital_CT_freesurfer", "rh_lateraloccipital_CT_freesurfer", 
+#   "rh_lingual_CT_freesurfer", "lh_transversetemporal_CT_freesurfer",
+#   "lh_isthmuscingulate_CT_freesurfer", "lh_medialorbitofrontal_CT_freesurfer",
+#   "rh_rostralmiddlefrontal_CT_freesurfer", "rh_precuneus_CT_freesurfer",
+#   "rh_superiortemporal_CT_freesurfer", "rh_precentral_CT_freesurfer")
+regs <- colnames(df_hc_bl%>%dplyr::select(ends_with("CT_freesurfer")))
+
+df_hc_bl_68 <- df_hc_bl[ ,regs]
+write.table(df_hc_bl_68,
+            "/data_J/input_files_Marquand/68M/input/features_allpatients.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+#####
+df <- DataPreparation(parc = "parc308", 
+                      harmonization = "lC", 
+                      match = T)
+df_hc <- subset(df, dcode==1)
+df_hc_bl <- subset(df_hc, timepoint==1)
+# regs <- c("rh_superiortemporal_part1_thickness" , "lh_insula_part3_thickness" ,
+#           "rh_superiortemporal_part2_thickness", "lh_rostralmiddlefrontal_part4_thickness",
+#           "lh_inferiorparietal_part6_thickness" ,"rh_rostralmiddlefrontal_part6_thickness",
+#           "rh_rostralmiddlefrontal_part4_thickness", "rh_fusiform_part1_thickness",
+#           "rh_superiorfrontal_part6_thickness", "lh_temporalpole_part1_thickness",
+#           "rh_parahippocampal_part1_thickness" ,"lh_inferiortemporal_part4_thickness",
+#           "rh_postcentral_part2_thickness", "rh_lingual_part4_thickness")
+regs <- colnames(df_hc_bl%>%dplyr::select(ends_with("_thickness")))
+
+df_hc_bl_308 <- df_hc_bl[ ,regs]
+write.table(df_hc_bl_308,
+            "/data_J/input_files_Marquand/308M/input/features_allpatients.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+rm(df, df_hc, df_hc_bl, regs, df_hc_bl_308, df_hc_bl_68)
+```
+
+
+- **covariates_allpatients.txt**:  (VARIABLES REGRESORAS: AGE, SEX AND EULER)
+
+  - **NO Match-it** 168 filas, 3 columnas. En total 504 valores
+  
+  - **Match-it** 168 filas, 3 columnas. En total 504 valores
+
+
+```{r eval=FALSE, include=FALSE}
+#####
+df <- DataPreparation(parc = "parc68", 
+                      harmonization = "lC", 
+                      match = F)
+df_hc <- subset(df,  dcode==1)
+df_hc_bl <- subset(df_hc, timepoint==1)
+vars <- c("age", "euler", "scode")
+df_hc_bl_3 <- df_hc_bl[,vars]
+
+write.table(df_hc_bl_3,
+            "/data_J/input_files_Marquand/68NoM/input/covariates_allpatients.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+
+#####
+df <- DataPreparation(parc = "parc308", 
+                      harmonization = "lC", 
+                      match = F)
+df_hc <- subset(df,  dcode==1)
+df_hc_bl <- subset(df_hc, timepoint==1)
+vars <- c("age", "euler", "scode")
+df_hc_bl_3 <- df_hc_bl[,vars]
+
+write.table(df_hc_bl_3,
+            "/data_J/input_files_Marquand/308NoM/input/covariates_allpatients.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+
+#####
+df <- DataPreparation(parc = "parc68", 
+                      harmonization = "lC", 
+                      match = T)
+df_hc <- subset(df,  dcode==1)
+df_hc_bl <- subset(df_hc, timepoint==1)
+vars <- c("age", "euler", "scode")
+df_hc_bl_3 <- df_hc_bl[,vars]
+
+write.table(df_hc_bl_3,
+            "/data_J/input_files_Marquand/68M/input/covariates_allpatients.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+
+#####
+df <- DataPreparation(parc = "parc308", 
+                      harmonization = "lC", 
+                      match = T)
+df_hc <- subset(df,  dcode==1)
+df_hc_bl <- subset(df_hc, timepoint==1)
+vars <- c("age", "euler", "scode")
+df_hc_bl_3 <- df_hc_bl[,vars]
+
+write.table(df_hc_bl_3,
+            "/data_J/input_files_Marquand/308M/input/covariates_allpatients.txt", 
+            sep = "\t", 
+            row.names = FALSE,
+            col.names = FALSE)
+rm(df, df_hc,df_hc_bl, df_hc_bl_3, vars)
+```
+
+We'll run the normative model with 10-fol cross validation:
+
+```{r eval=FALSE, include=TRUE}
+docker run -v /home/jjanssen/clara_r/input_files_Marquand/68M/input:/mnt/data -h master --privileged -it noemigl/pcntoolkit:v2 bash
+
+/opt/conda/bin/python pcntoolkit/normative.py -c /mnt/data/covariates_HC.txt -k 10 /mnt/data/features_HC.txt standardize=False savemodel=True
+
+cp *.txt /mnt/data/output
+```
+
+```{r eval=FALSE, include=FALSE}
+# docker run -v /home/jjanssen/clara_r/input_files_Marquand/308M/input:/mnt/data -h master --privileged -it noemigl/pcntoolkit:v2 bash
+# /opt/conda/bin/python pcntoolkit/normative.py -c /mnt/data/covariates_HC.txt -k 10 /mnt/data/features_HC.txt standardize=False savemodel=True
+# cp *.txt /mnt/data/output
+ 
+# docker run -v /home/jjanssen/clara_r/input_files_Marquand/68NoM/input:/mnt/data -h master --privileged -it noemigl/pcntoolkit:v2 bash
+# /opt/conda/bin/python pcntoolkit/normative.py -c /mnt/data/covariates_HC.txt -k 10 /mnt/data/features_HC.txt standardize=False savemodel=True
+# cp *.txt /mnt/data/output
+
+# docker run -v /home/jjanssen/clara_r/input_files_Marquand/308NoM/input:/mnt/data -h master --privileged -it noemigl/pcntoolkit:v2 bash
+# /opt/conda/bin/python pcntoolkit/normative.py -c /mnt/data/covariates_HC.txt -k 10 /mnt/data/features_HC.txt standardize=False savemodel=True
+# cp *.txt /mnt/data/output
+
+cat features_HC.txt | wc
+head -1 features_HC.txt | wc
+```
+
+
+# GET RESULTS
+
+```{r include=FALSE}
+transform_df_shape <- function(df) {
+  #df <- perf_lm_lme_308M
+  reg_names <- unique(df$region)
+  df_reg <- subset(df, region==reg_names[1])
+  # LM
+  df_lm <- NULL
+  df_lm <- rbind(df_lm, data.frame("reg" = df_reg$y_pred_lm))
+  colnames(df_lm)[colnames(df_lm) == 'reg'] <- reg_names[1]
+  # LME
+  df_lme <- NULL
+  df_lme <- rbind(df_lme, data.frame("reg" = df_reg$y_pred_lme))
+  colnames(df_lme)[colnames(df_lme) == 'reg'] <- reg_names[1]
+  # LME DynPred
+  df_lme_dynPred <- NULL
+  df_lme_dynPred <- rbind(df_lme_dynPred, data.frame("reg" = df_reg$y_pred_lme_dynPred))
+  colnames(df_lme_dynPred)[colnames(df_lme_dynPred) == 'reg'] <- reg_names[1]
+  # TRUE VALUE
+  df_true <- NULL
+  df_true <- rbind(df_true, data.frame("reg" = df_reg$y_true))
+  colnames(df_true)[colnames(df_true) == 'reg'] <- reg_names[1]
+
+  for (i in 2:length(reg_names)) {
+    df_reg <- subset(df, region==reg_names[i])
+    # LM
+    df_lm <- cbind(df_lm, data.frame("reg" = df_reg$y_pred_lm))
+    colnames(df_lm)[colnames(df_lm) == 'reg'] <- reg_names[i]
+    # LME
+    df_lme <- cbind(df_lme, data.frame("reg" = df_reg$y_pred_lme))
+    colnames(df_lme)[colnames(df_lme) == 'reg'] <- reg_names[i]
+    # LME DynPred
+    df_lme_dynPred <- cbind(df_lme_dynPred, data.frame("reg" = df_reg$y_pred_lme_dynPred))
+    colnames(df_lme_dynPred)[colnames(df_lme_dynPred) == 'reg'] <- reg_names[i]
+    # TRUE VALUE
+    df_true <- cbind(df_true, data.frame("reg" = df_reg$y_true))
+    colnames(df_true)[colnames(df_true) == 'reg'] <- reg_names[i]
+
+  }
+  return(list("y_lm" = df_lm,
+              "y_lme"= df_lme,
+              "y_lme_dynPred" = df_lme_dynPred,
+              "y_true" = df_true))
+}
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# We added this cpde lines to remove some rows with an error
+idx_remove <- sort(which(perf_lm_lme_308M == "Error in lme.formula(as.formula(\"reg ~ scode + age + euler\"), random = ~1 +  : \n  optim problem, convergence error code = 1\n  message = \n"))
+#perf_lm_lme_308M[337,2] # Error message
+
+if (!length(idx_remove)==0){
+  perf_lm_lme_308M <- perf_lm_lme_308M[-idx_remove, ]
+}
+```
+
+
+```{r include=FALSE}
+# LM and LME
+perf_lm_lme_68NoM  <- read.csv("/data_J/Results/Files/model_comparison/performance_68NoM.csv")
+perf_68NoM <- transform_df_shape(perf_lm_lme_68NoM)
+
+perf_lm_lme_308NoM <- read.csv("/data_J/Results/Files/model_comparison/performance_308NoM.csv")
+perf_308NoM <- transform_df_shape(perf_lm_lme_308NoM)
+
+perf_lm_lme_68M  <- read.csv("/data_J/Results/Files/model_comparison/performance_68M.csv")
+perf_68M <- transform_df_shape(perf_lm_lme_68M)
+
+perf_lm_lme_308M <- read.csv("/data_J/Results/Files/model_comparison/performance_308M.csv")
+perf_308M <- transform_df_shape(perf_lm_lme_308M)
+
+# PCNtoolkit
+y_pcn_68NoM  <- read.table(paste0("/data_J/input_files_Marquand/68NoM/input/output/yhat_estimate.txt"), sep=" ", header=F)
+y_pcn_308NoM <- read.table(paste0("/data_J/input_files_Marquand/308NoM/input/output/yhat_estimate.txt"), sep=" ", header=F)
+y_pcn_68M  <- read.table(paste0("/data_J/input_files_Marquand/68M/input/output/yhat_estimate.txt"), sep=" ", header=F)
+y_pcn_308M <- read.table(paste0("/data_J/input_files_Marquand/308M/input/output/yhat_estimate.txt"), sep=" ", header=F)
+y_true_pcn_68NoM <- read.table(paste0("/data_J/input_files_Marquand/68NoM/input/features_HC.txt"), sep="\t", header=F)
+y_true_pcn_308NoM <- read.table(paste0("/data_J/input_files_Marquand/308NoM/input/features_HC.txt"), sep="\t", header=F)
+y_true_pcn_68M <- read.table(paste0("/data_J/input_files_Marquand/68M/input/features_HC.txt"), sep="\t", header=F)
+y_true_pcn_308M <- read.table(paste0("/data_J/input_files_Marquand/308M/input/features_HC.txt"), sep="\t", header=F)
+```
+
+This function was created to extract MAE and MSE for each fold.
+
+```{r}
+
+get_metrics_MAE_MSE <- function(df_true, df_pred){
+  reg_names <- colnames(df_true)
+  df_MAE <- NULL
+  df_MSE <- NULL
+  for (i in 1:length(reg_names)) {
+    MAE <- NULL
+    MSE <- NULL
+    for (j in 1:nrow(df_true)) {
+      # Mean Absolute Error
+      MAE <- c(MAE, mean_absolute_error(df_pred[j, reg_names[i]], df_true[j, reg_names[i]]))
+      # Mean Squared Error
+      MSE <- c(MSE, mean_squared_error( df_pred[j, reg_names[i]], df_true[j, reg_names[i]]))
+    }
+    
+    if (i==1){
+      df_MAE <- rbind(df_MAE, data.frame("reg" = MAE))
+      colnames(df_MAE)[colnames(df_MAE) == 'reg'] <- reg_names[i]
+      df_MSE <- rbind(df_MSE, data.frame("reg" = MSE))
+      colnames(df_MSE)[colnames(df_MSE) == 'reg'] <- reg_names[i]
+    }
+    
+    if (i>1){
+      df_MAE <- cbind(df_MAE, data.frame("reg" = MAE))
+      colnames(df_MAE)[colnames(df_MAE) == 'reg'] <- reg_names[i]
+      df_MSE <- cbind(df_MSE, data.frame("reg" = MSE))
+      colnames(df_MSE)[colnames(df_MSE) == 'reg'] <- reg_names[i]
+    }
+  }
+  return(list("MAE" = df_MAE, 
+              "MSE" = df_MSE))
+}
+
+```
+
+
+```{r include=FALSE}
+######
+metrics_lm_68M <- get_metrics_MAE_MSE("df_true" = perf_68M$y_true,
+                                      "df_pred" = perf_68M$y_lm)
+metrics_lme_68M <- get_metrics_MAE_MSE("df_true" = perf_68M$y_true,
+                                       "df_pred" = perf_68M$y_lme)
+metrics_lme_dynPred_68M <- get_metrics_MAE_MSE("df_true" = perf_68M$y_true,
+                                                "df_pred" = perf_68M$y_lme_dynPred)
+metrics_pcn_68M <- get_metrics_MAE_MSE("df_true" = y_true_pcn_68M,
+                                       "df_pred" = y_pcn_68M)
+######
+metrics_lm_308M <- get_metrics_MAE_MSE("df_true" = perf_308M$y_true,
+                                       "df_pred" = perf_308M$y_lm)
+metrics_lme_308M <- get_metrics_MAE_MSE("df_true" = perf_308M$y_true,
+                                        "df_pred" = perf_308M$y_lme)
+metrics_lme_dynPred_308M <- get_metrics_MAE_MSE("df_true" = perf_308M$y_true,
+                                                "df_pred" = perf_308M$y_lme_dynPred)
+metrics_pcn_308M <- get_metrics_MAE_MSE("df_true" = y_true_pcn_308M,
+                                        "df_pred" = y_pcn_308M)
+######
+metrics_lm_68NoM <- get_metrics_MAE_MSE("df_true" = perf_68NoM$y_true,
+                                        "df_pred" = perf_68NoM$y_lm)
+metrics_lme_68NoM <- get_metrics_MAE_MSE("df_true" = perf_68NoM$y_true,
+                                         "df_pred" = perf_68NoM$y_lme)
+metrics_lme_dynPred_68NoM <- get_metrics_MAE_MSE("df_true" = perf_68NoM$y_true,
+                                                 "df_pred" = perf_68NoM$y_lme_dynPred)
+metrics_pcn_68NoM <- get_metrics_MAE_MSE("df_true" = y_true_pcn_68NoM,
+                                         "df_pred" = y_pcn_68NoM)
+######
+metrics_lm_308NoM <- get_metrics_MAE_MSE("df_true" = perf_308NoM$y_true,
+                                         "df_pred" = perf_308NoM$y_lm)
+metrics_lme_308NoM <- get_metrics_MAE_MSE("df_true" = perf_308NoM$y_true,
+                                          "df_pred" = perf_308NoM$y_lme)
+metrics_lme_dynPred_308NoM <- get_metrics_MAE_MSE("df_true" = perf_308NoM$y_true,
+                                                  "df_pred" = perf_308NoM$y_lme_dynPred)
+metrics_pcn_308NoM <- get_metrics_MAE_MSE("df_true" = y_true_pcn_308NoM,
+                                          "df_pred" = y_pcn_308NoM)
+```
+
+
+```{r include=FALSE}
+
+get_mean_sd_whole <- function(df) {
+  df_mean <- apply(X=df, MARGIN=2, FUN=mean, na.rm=TRUE)
+  df_mean <- mean(df_mean)
+  df_mean
+  
+  df_sd <- apply(X=df, MARGIN=2, FUN=sd, na.rm=TRUE)
+  df_sd <- mean(df_sd)
+  df_sd
+  return(list("mean"= round(df_mean,2),
+              "sd"  = round(df_sd,  2)))
+}
+
+```
+
+# TABLE OF MEAN ± SD
+
+```{r include=FALSE}
+################
+MAE_lm_308M <- get_mean_sd_whole(metrics_lm_308M$MAE)
+MAE_lme_308M <- get_mean_sd_whole(metrics_lme_308M$MAE)
+MAE_lme_dynPred_308M <- get_mean_sd_whole(metrics_lme_dynPred_308M$MAE)
+MAE_pcn_308M <- get_mean_sd_whole(metrics_pcn_308M$MAE)
+
+MSE_lm_308M <- get_mean_sd_whole(metrics_lm_308M$MSE)
+MSE_lme_308M <- get_mean_sd_whole(metrics_lme_308M$MSE)
+MSE_lme_dynPred_308M <- get_mean_sd_whole(metrics_lme_dynPred_308M$MSE)
+MSE_pcn_308M <- get_mean_sd_whole(metrics_pcn_308M$MSE)
+
+################
+MAE_lm_68M <- get_mean_sd_whole(metrics_lm_68M$MAE)
+MAE_lme_68M <- get_mean_sd_whole(metrics_lme_68M$MAE)
+MAE_lme_dynPred_68M <- get_mean_sd_whole(metrics_lme_dynPred_68M$MAE)
+MAE_pcn_68M <- get_mean_sd_whole(metrics_pcn_68M$MAE)
+
+MSE_lm_68M <- get_mean_sd_whole(metrics_lm_68M$MSE)
+MSE_lme_68M <- get_mean_sd_whole(metrics_lme_68M$MSE)
+MSE_lme_dynPred_68M <- get_mean_sd_whole(metrics_lme_dynPred_68M$MSE)
+MSE_pcn_68M <- get_mean_sd_whole(metrics_pcn_68M$MSE)
+################
+MAE_lm_68NoM <- get_mean_sd_whole(metrics_lm_68NoM$MAE)
+MAE_lme_68NoM <- get_mean_sd_whole(metrics_lme_68NoM$MAE)
+MAE_lme_dynPred_68NoM <- get_mean_sd_whole(metrics_lme_dynPred_68NoM$MAE)
+MAE_pcn_68NoM <- get_mean_sd_whole(metrics_pcn_68NoM$MAE)
+
+MSE_lm_68NoM <- get_mean_sd_whole(metrics_lm_68NoM$MSE)
+MSE_lme_68NoM <- get_mean_sd_whole(metrics_lme_68NoM$MSE)
+MSE_lme_dynPred_68NoM <- get_mean_sd_whole(metrics_lme_dynPred_68NoM$MSE)
+MSE_pcn_68NoM <- get_mean_sd_whole(metrics_pcn_68NoM$MSE)
+
+################
+MAE_lm_308NoM <- get_mean_sd_whole(metrics_lm_308NoM$MAE)
+MAE_lme_308NoM <- get_mean_sd_whole(metrics_lme_308NoM$MAE)
+MAE_lme_dynPred_308NoM <- get_mean_sd_whole(metrics_lme_dynPred_308NoM$MAE)
+MAE_pcn_308NoM <- get_mean_sd_whole(metrics_pcn_308NoM$MAE)
+
+MSE_lm_308NoM <- get_mean_sd_whole(metrics_lm_308NoM$MSE)
+MSE_lme_308NoM <- get_mean_sd_whole(metrics_lme_308NoM$MSE)
+MSE_lme_dynPred_308NoM <- get_mean_sd_whole(metrics_lme_dynPred_308NoM$MSE)
+MSE_pcn_308NoM <- get_mean_sd_whole(metrics_pcn_308NoM$MSE)
+
+###############
+
+#####################
+performance_table <- data.frame(df = "308M" , metric=" ", 
+                        "LM" = " " , 
+                        "LME"= " ", 
+                        "LME.DynPred" = " ", 
+                        "NLM" = " ")
+
+performance_table <- rbind(performance_table, 
+                         c(df = " ", metric="MAE", 
+                        "LM" = paste0(MAE_lm_308M$mean, "\u00b1", MAE_lm_308M$sd) , 
+                        "LME"= paste0(MAE_lme_308M$mean,"\u00b1", MAE_lme_308M$sd) , 
+                        "LME.DynPred" = paste0(MAE_lme_dynPred_308M$mean, "\u00b1", MAE_lme_dynPred_308M$sd) , 
+                        "NLM" = paste0(MAE_pcn_308M$mean, "\u00b1", MAE_pcn_308M$sd)))
+
+performance_table <- rbind(performance_table, 
+                        c(df = " ", metric="MSE", 
+                        "LM" = paste0(MSE_lm_308M$mean, "\u00b1", MSE_lm_308M$sd) , 
+                        "LME"= paste0(MSE_lme_308M$mean,"\u00b1", MSE_lme_308M$sd) , 
+                        "LME.DynPred" = paste0(MSE_lme_dynPred_308M$mean, "\u00b1", MSE_lme_dynPred_308M$sd) , 
+                        "NLM" = paste0(MSE_pcn_308M$mean, "\u00b1", MSE_pcn_308M$sd)))
+
+#####################
+performance_table <- rbind(performance_table, 
+                         c(df = "68M" , metric=" ", 
+                        "LM" = " " , 
+                        "LME"= " ", 
+                        "LME.DynPred" = " ", 
+                        "NLM" = " "))
+
+performance_table <- rbind(performance_table, 
+                         c(df = " ", metric="MAE", 
+                        "LM" = paste0(MAE_lm_68M$mean, "\u00b1", MAE_lm_68M$sd) , 
+                        "LME"= paste0(MAE_lme_68M$mean,"\u00b1", MAE_lme_68M$sd) , 
+                        "LME.DynPred" = paste0(MAE_lme_dynPred_68M$mean, "\u00b1", MAE_lme_dynPred_68M$sd) , 
+                        "NLM" = paste0(MAE_pcn_68M$mean, "\u00b1", MAE_pcn_68M$sd)))
+
+performance_table <- rbind(performance_table, 
+                        c(df = " ", metric="MSE", 
+                        "LM" = paste0(MSE_lm_68M$mean, "\u00b1", MSE_lm_68M$sd) , 
+                        "LME"= paste0(MSE_lme_68M$mean,"\u00b1", MSE_lme_68M$sd) , 
+                        "LME.DynPred" = paste0(MSE_lme_dynPred_68M$mean, "\u00b1", MSE_lme_dynPred_68M$sd) , 
+                        "NLM" = paste0(MSE_pcn_68M$mean, "\u00b1", MSE_pcn_68M$sd)))
+
+#####################
+performance_table <- rbind(performance_table, 
+                         c(df = "68NoM" , metric=" ", 
+                        "LM" = " " , 
+                        "LME"= " ", 
+                        "LME.DynPred" = " ", 
+                        "NLM" = " "))
+
+performance_table <- rbind(performance_table, 
+                         c(df = " ", metric="MAE", 
+                        "LM" = paste0(MAE_lm_68NoM$mean, "\u00b1", MAE_lm_68NoM$sd) , 
+                        "LME"= paste0(MAE_lme_68NoM$mean,"\u00b1", MAE_lme_68NoM$sd) , 
+                        "LME.DynPred" = paste0(MAE_lme_dynPred_68NoM$mean, "\u00b1", MAE_lme_dynPred_68NoM$sd) , 
+                        "NLM" = paste0(MAE_pcn_68NoM$mean, "\u00b1", MAE_pcn_68NoM$sd)))
+
+performance_table <- rbind(performance_table, 
+                        c(df = " ", metric="MSE", 
+                        "LM" = paste0(MSE_lm_68NoM$mean, "\u00b1", MSE_lm_68NoM$sd) , 
+                        "LME"= paste0(MSE_lme_68NoM$mean,"\u00b1", MSE_lme_68NoM$sd) , 
+                        "LME.DynPred" = paste0(MSE_lme_dynPred_68NoM$mean, "\u00b1", MSE_lme_dynPred_68NoM$sd) , 
+                        "NLM" = paste0(MSE_pcn_68NoM$mean, "\u00b1", MSE_pcn_68NoM$sd)))
+#####################
+performance_table <- rbind(performance_table, 
+                         c(df = "308NoM" , metric=" ", 
+                        "LM" = " " , 
+                        "LME"= " ", 
+                        "LME.DynPred" = " ", 
+                        "NLM" = " "))
+
+performance_table <- rbind(performance_table, 
+                         c(df = " ", metric="MAE", 
+                        "LM" = paste0(MAE_lm_308NoM$mean, "\u00b1", MAE_lm_308NoM$sd) , 
+                        "LME"= paste0(MAE_lme_308NoM$mean,"\u00b1", MAE_lme_308NoM$sd) , 
+                        "LME.DynPred" = paste0(MAE_lme_dynPred_308NoM$mean, "\u00b1", MAE_lme_dynPred_308NoM$sd) , 
+                        "NLM" = paste0(MAE_pcn_308NoM$mean, "\u00b1", MAE_pcn_308NoM$sd)))
+
+performance_table <- rbind(performance_table, 
+                        c(df = " ", metric="MSE", 
+                        "LM" = paste0(MSE_lm_308NoM$mean, "\u00b1", MSE_lm_308NoM$sd) , 
+                        "LME"= paste0(MSE_lme_308NoM$mean,"\u00b1", MSE_lme_308NoM$sd) , 
+                        "LME.DynPred" = paste0(MSE_lme_dynPred_308NoM$mean, "\u00b1", MSE_lme_dynPred_308NoM$sd) , 
+                        "NLM" = paste0(MSE_pcn_308NoM$mean, "\u00b1", MSE_pcn_308NoM$sd)))
+
+```
+
+```{r echo=FALSE}
+kable(performance_table)
+```
+
+
+# PLOT 1
+
+
+```{r include=FALSE}
+get_df_to_plot <- function(metrics_lm, metrics_lme, metrics_lme_dynPred, metrics_pcn) {
+  ############### MAE ############
+  MAE_lm  <- metrics_lm$MAE
+  MAE_lme <- metrics_lme$MAE
+  MAE_lme_dynPred <- metrics_lme_dynPred$MAE
+  MAE_pcn <- metrics_pcn$MAE
+  
+  MAE_lm  <- apply(X=MAE_lm, MARGIN=2, FUN=mean, na.rm=TRUE)
+  MAE_lme <- apply(X=MAE_lme, MARGIN=2, FUN=mean, na.rm=TRUE)
+  MAE_lme_dynPred <- apply(X=MAE_lme_dynPred, MARGIN=2, FUN=mean, na.rm=TRUE)
+  MAE_pcn  <- apply(X=MAE_pcn, MARGIN=2, FUN=mean, na.rm=TRUE)
+  ############### MSE ############
+  MSE_lm  <- metrics_lm$MSE
+  MSE_lme <- metrics_lme$MSE
+  MSE_lme_dynPred <- metrics_lme_dynPred$MSE
+  MSE_pcn <- metrics_pcn$MSE
+  
+  MSE_lm  <- apply(X=MSE_lm, MARGIN=2, FUN=mean, na.rm=TRUE)
+  MSE_lme <- apply(X=MSE_lme, MARGIN=2, FUN=mean, na.rm=TRUE)
+  MSE_lme_dynPred <- apply(X=MSE_lme_dynPred, MARGIN=2, FUN=mean, na.rm=TRUE)
+  MSE_pcn  <- apply(X=MSE_pcn, MARGIN=2, FUN=mean, na.rm=TRUE)
+  
+  df_plot <- data.frame("MAE_lm" = MAE_lm,
+                        "MAE_lme" = MAE_lme,
+                        "MAE_lme_dynPred" = MAE_lme_dynPred,
+                        "MAE_pcn" = MAE_pcn,
+                        "MSE_lm" = MSE_lm,
+                        "MSE_lme" = MSE_lme,
+                        "MSE_lme_dynPred" = MSE_lme_dynPred,
+                        "MSE_pcn" = MSE_pcn)
+  
+  df_plot <- transform(df_plot,
+            MAE_lm  = as.numeric(MAE_lm),
+            MAE_lme = as.numeric(MAE_lme),
+            MAE_lme_dynPred  = as.numeric(MAE_lme_dynPred),
+            MAE_pcn  = as.numeric(MAE_pcn),
+            MSE_lm  = as.numeric(MSE_lm),
+            MSE_lme  = as.numeric(MSE_lme),
+            MSE_lme_dynPred  = as.numeric(MSE_lme_dynPred),
+            MSE_pcn  = as.numeric(MSE_pcn))
+  
+  df_plot[,"region"] <- rownames(df_plot)
+
+  DFtall <- df_plot %>% 
+    tidyr::pivot_longer(names_to = "NamesMSE", values_to = "ValueMSE", MSE_lm:MSE_pcn) %>% 
+    tidyr::pivot_longer(names_to = "NamesMAE", values_to = "ValueMAE", MAE_lm:MAE_pcn) 
+  return(DFtall)
+}
+```
+
+
+```{r include=FALSE}
+########## 68NoM #################
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_68NoM, 
+                         "metrics_lme" = metrics_lme_68NoM, 
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_68NoM,
+                         "metrics_pcn" = metrics_pcn_68NoM)
+
+# rm(list=setdiff(ls(), "DFtall"))
+
+plot1 <- ggplot(DFtall, aes_string(x="NamesMAE", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (No matched)",
+  labs(title="\n68NoM",
+       x ="Regions",
+       y = "MAE") +
+  ylim(0,0.35)+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"),
+        # legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+                      values = c("green4", "red", "orange", "midnightblue"))
+
+plot2 <- ggplot(DFtall, aes_string(x="NamesMSE", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  labs(color = "") +
+  labs(title=" ",
+       x ="Regions",
+       y = "MSE") +
+  ylim(0,0.2)+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"),
+        # legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+                      values = c("green4", "red", "orange", "midnightblue"))
+
+############## 308NoM ################
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_308NoM, 
+                         "metrics_lme" = metrics_lme_308NoM, 
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_308NoM,
+                         "metrics_pcn" = metrics_pcn_308NoM)
+
+plot3 <- ggplot(DFtall, aes_string(x="NamesMAE", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  labs(color = "") +
+  #labs(title="\n308 regions \n (No matched)",
+  labs(title="\n308NoM",
+       x ="Regions",
+       y = "MAE") +
+  ylim(0,0.35)+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title = element_blank(),
+        # legend.title = element_text(size = 15,face="bold"),
+        # legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+                      values = c("green4", "red", "orange", "midnightblue"))
+
+plot4 <- ggplot(DFtall, aes_string(x="NamesMSE", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  labs(color = "") +
+  labs(title=" ",
+       x ="Regions",
+       y = "MSE") +
+  ylim(0,0.2)+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title = element_blank(),
+        # legend.title = element_text(size = 15,face="bold"),
+        # legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+                      values = c("green4", "red", "orange", "midnightblue"))
+############# 68M ##############
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_68M, 
+                         "metrics_lme" = metrics_lme_68M, 
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_68M,
+                         "metrics_pcn" = metrics_pcn_68M)
+
+plot5 <- ggplot(DFtall, aes_string(x="NamesMAE", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (Matched)",
+  labs(title="\n68M",
+       x ="Regions",
+       y = "MAE") +
+  ylim(0,0.35)+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title = element_blank(),
+        # legend.title = element_text(size = 15,face="bold"),
+        # legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+
+plot6 <- ggplot(DFtall, aes_string(x="NamesMSE", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  labs(color = "") +
+  labs(title=" ",
+       x ="Regions",
+       y = "MSE") +
+  ylim(0,0.2)+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title = element_blank(),
+        # legend.title = element_text(size = 15,face="bold"),
+        # legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+################## 308M #################
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_308M, 
+                         "metrics_lme" = metrics_lme_308M, 
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_308M,
+                         "metrics_pcn" = metrics_pcn_308M)
+
+plot7 <- ggplot(DFtall, aes_string(x="NamesMAE", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  labs(color = "") +
+  #labs(title="\n308 regions \n (Matched)",
+  labs(title="\n308M",
+       x ="Regions",
+       y = "MAE") +
+  ylim(0,0.35)+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title = element_blank(),
+        # legend.title = element_text(size = 15,face="bold"),
+        # legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+
+plot8 <- ggplot(DFtall, aes_string(x="NamesMSE", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  labs(color = "") +
+  labs(title=" ",
+       x ="Regions",
+       y = "MSE") +
+  ylim(0,0.2)+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title = element_blank(),
+        # legend.title = element_text(size = 15,face="bold"),
+        # legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+```
+
+
+```{r echo=FALSE}
+prow <- plot_grid(
+  plot1 + theme(legend.position="none", plot.margin = unit(c(0, 0, 0, 0), "cm"), axis.ticks.x = element_blank()),
+  plot3 + theme(legend.position="none", plot.margin = unit(c(0, 0, 0, 0), "cm"), axis.ticks.x = element_blank()),
+  plot5 + theme(legend.position="none", plot.margin = unit(c(0, 0, 0, 0), "cm"), axis.ticks.x = element_blank()),
+  plot7 + theme(legend.position="none", plot.margin = unit(c(0, 0, 0, 0), "cm"), axis.ticks.x = element_blank()),
+  
+  plot2 + theme(legend.position="none", plot.margin = unit(c(0, 0, 0, 0), "cm"), axis.ticks.x = element_blank()),
+  plot4 + theme(legend.position="none", plot.margin = unit(c(0, 0, 0, 0), "cm"), axis.ticks.x = element_blank()),
+  plot6 + theme(legend.position="none", plot.margin = unit(c(0, 0, 0, 0), "cm"), axis.ticks.x = element_blank()),
+  plot8 + theme(legend.position="none", plot.margin = unit(c(0, 0, 0, 0), "cm"), axis.ticks.x = element_blank()),
+  align = 'vh',
+  labels = c(" ", " ", " ", " ", " ", " ", " ", " "),
+  nrow = 2)
+
+# extract a legend that is laid out horizontally
+legend_b <- get_legend(
+  plot1 +
+    guides(color = guide_legend(nrow = 1)) +
+    theme(legend.position = "bottom")
+)
+
+plot_grid(prow, legend_b, ncol = 1, rel_heights = c(1, 0.1))
+#rm(plot1, plot2, plot3, plot4, plot5, plot6, plot7, plot8)
+
+```
+
+
+# PLOT 2
+
+
+```{r include=FALSE}
+#################################
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_68NoM,
+                         "metrics_lme" = metrics_lme_68NoM,
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_68NoM,
+                         "metrics_pcn" = metrics_pcn_68NoM)
+
+p1 <- ggplot(DFtall, aes_string(x="region", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (No matched)",
+  labs(title="\n68NoM",
+       x ="Regions",
+       y = "MSE")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="top") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+p2 <- ggplot(DFtall, aes_string(x="region", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (No matched)",
+  labs(title="\n68NoM",
+       x ="Regions",
+       y = "MAE")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="top") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+#################################
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_308NoM,
+                         "metrics_lme" = metrics_lme_308NoM,
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_308NoM,
+                         "metrics_pcn" = metrics_pcn_308NoM)
+
+p3 <- ggplot(DFtall, aes_string(x="region", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n308 regions \n (No matched)",
+  labs(title="\n308NoM",
+       x ="Regions",
+       y = " ")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text  = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="top") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+p4 <- ggplot(DFtall, aes_string(x="region", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n308 regions \n (No matched)",
+  labs(title="\n308NoM",
+       x ="Regions",
+       y = " ")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="top") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+
+#################################
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_68M,
+                         "metrics_lme" = metrics_lme_68M,
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_68M,                         
+                         "metrics_pcn" = metrics_pcn_68M)
+
+
+p5 <- ggplot(DFtall, aes_string(x="region", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (Matched)",
+  labs(title="\n68M",
+       x ="Regions",
+       y = "MSE")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="top") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+
+p6 <- ggplot(DFtall, aes_string(x="region", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (Matched)",
+  labs(title="\n68M",
+       x ="Regions",
+       y = "MAE")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="top") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+
+#################################
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_308M,
+                         "metrics_lme" = metrics_lme_308M,
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_308M,
+                         "metrics_pcn" = metrics_pcn_308NoM)
+
+p7 <- ggplot(DFtall, aes_string(x="region", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n308 regions \n (Matched)",
+  labs(title="\n308M",
+       x ="Regions",
+       y = " ")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="top") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+
+p8 <- ggplot(DFtall, aes_string(x="region", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n308 regions \n (Matched)",
+  labs(title="\n308M",
+       x ="Regions",
+       y = " ")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="top") +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+```
+
+```{r echo=FALSE}
+
+# extract a legend that is laid out horizontally
+legend_b <- get_legend(
+  p1 +
+    guides(color = guide_legend(nrow = 1)) +
+    theme(legend.position = "top",
+          legend.key.size = unit(1, 'cm'),
+          legend.text = element_text(size=20)))
+
+
+prow <- plot_grid(
+  p2 + theme(legend.position="none", 
+             axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL),
+  p4 + theme(legend.position="none", 
+             axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL),
+  p6 + theme(legend.position="none", 
+             axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL),
+  p8 + theme(legend.position="none", 
+             axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL),
+  
+  p1 + theme(legend.position="none", 
+             axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL),
+  p3 + theme(legend.position="none", 
+             axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL),
+  p5 + theme(legend.position="none", 
+             axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL),
+  p7 + theme(legend.position="none", 
+             axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL),
+  align = 'vh',
+  labels = c(" ", " ", " ", " ", " ", " ", " ", " "),
+  hjust = -1,
+  nrow = 4)
+
+# rm(p1, p2, p3, p4, p5, p6, p7, p8)
+# rm(DFtall, legend_b, prow)
+```
+
+```{r echo=FALSE, fig.height=8, fig.width=12, message=FALSE, warning=FALSE}
+plot <- plot_grid(prow, legend_b, ncol = 1, rel_heights = c(1, .1))
+
+x.grob <- textGrob("region", gp=gpar(fontface="bold", fontsize=23))
+
+grid.arrange(arrangeGrob(plot, bottom = x.grob))
+#aqui
+```
+
+
+
+```{r}
+p2 <- p2 + theme(axis.ticks.x = element_blank(), 
+             legend.text = element_text(size=20),
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL)
+p4 <- p4 + theme(axis.ticks.x = element_blank(), 
+             legend.text = element_text(size=20),
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL)
+
+p6 <- p6 + theme(axis.ticks.x = element_blank(), 
+             legend.text = element_text(size=20),
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL)
+
+p8 <- p8 + theme(axis.ticks.x = element_blank(), 
+             legend.text = element_text(size=20),
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL)
+  
+p1 <- p1 + theme(axis.ticks.x = element_blank(), 
+             legend.text = element_text(size=20),
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL)
+
+p3 <- p3 + theme(axis.ticks.x = element_blank(), 
+             legend.text = element_text(size=20),
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL)
+
+p5 <- p5 + theme(axis.ticks.x = element_blank(), 
+             legend.text = element_text(size=20),
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL)
+
+p7 <- p7 + theme(axis.ticks.x = element_blank(), 
+             legend.text = element_text(size=20),
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL)
+```
+
+```{r echo=FALSE, fig.height=8, fig.width=12, message=FALSE, warning=FALSE}
+figure <- ggarrange(p2, p4, p6, p8, p1, p3, p5, p7, ncol=2, nrow=4, common.legend = TRUE, legend="top")
+
+
+annotate_figure(figure, bottom = text_grob("Region", face = "bold", size = 20, color = "black"))
+
+```
+
+# PLOT 3
+
+
+```{r include=FALSE}
+#################################
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_68NoM,
+                         "metrics_lme" = metrics_lme_68NoM,
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_68NoM,
+                         "metrics_pcn" = metrics_pcn_68NoM)
+
+p1 <- ggplot(DFtall, aes_string(x="region", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (No matched)",
+  labs(title="\n68NoM",
+       x ="Regions",
+       y = "MSE")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+p2 <- ggplot(DFtall, aes_string(x="region", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (No matched)",
+  labs(title="\n68NoM",
+       x ="Regions",
+       y = "MAE")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+
+#################################
+DFtall <- get_df_to_plot("metrics_lm" = metrics_lm_68M,
+                         "metrics_lme" = metrics_lme_68M,
+                         "metrics_lme_dynPred" = metrics_lme_dynPred_68M,                         
+                         "metrics_pcn" = metrics_pcn_68M)
+
+
+p5 <- ggplot(DFtall, aes_string(x="region", y="ValueMSE", group= "NamesMSE", color="NamesMSE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (Matched)",
+  labs(title="\n68M",
+       x ="Regions",
+       y = "MSE")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+
+
+p6 <- ggplot(DFtall, aes_string(x="region", y="ValueMAE", group= "NamesMAE", color="NamesMAE")) +
+  geom_point(alpha = 0.4, size=2) +
+  geom_line(alpha = 0.3) +
+  labs(color = "") +
+  #labs(title="\n68 regions \n (Matched)",
+  labs(title="\n68M",
+       x ="Regions",
+       y = "MAE")+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        # axis.title.y =  element_text(size = 15,face="bold"),
+        # legend.title = element_text(size = 15,face="bold"), 
+        # legend.text = element_text(size  = 15),
+        # legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") + 
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("LM",
+                                 "LME (regular predictions)",
+                                 "LME (dynamic predictions)",
+                                 "NLM"),
+  values = c("green4", "red", "orange", "midnightblue"))
+```
+
+```{r echo=FALSE}
+prow <- plot_grid(
+  p2 + theme(legend.position="none", axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL),
+  p6 + theme(legend.position="none", axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.15,0.3),
+                           limits=c(0, 0.4),
+                           minor_breaks = NULL),
+
+  p1 + theme(legend.position="none", axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL),
+  p5 + theme(legend.position="none", 
+             axis.ticks.x = element_blank(), 
+             plot.title   = element_text(size=25),
+             axis.title.y = element_text(size = 23),
+             axis.text.y  = element_text(size = 17)) +
+        scale_y_continuous(breaks=c(0, 0.10,0.2),
+                           limits=c(0, 0.20),
+                           minor_breaks = NULL),
+  align = 'vh',
+  labels = c(" ", " ", " ", " ", " ", " ", " ", " "),
+  hjust = -1,
+  nrow = 2)
+
+# extract a legend that is laid out horizontally
+legend_b <- get_legend(
+  p1 +
+    guides(color = guide_legend(nrow = 1)) +
+    theme(legend.position = "bottom",
+          legend.key.size = unit(1, 'cm'),
+          legend.text = element_text(size=20))
+)
+plot_grid(prow, legend_b, ncol = 1, rel_heights = c(1, .1))
+# rm(p1, p2, p3, p4, p5, p6, p7, p8)
+# rm(DFtall, legend_b, prow)
+```
+
+
+
+
+
+
+
+```{r include=FALSE}
+extract_metrics_seed <- function(df) {
+  regs  <- unique(df$region)
+  seeds  <- unique(df$seed)
+
+  # We create an empty column to store the z-scores
+  df["Z-score"] <- 0
+  
+  
+  # and an empty structure to store the metrics
+  metrics_df <- NULL
+  
+  for (reg in regs){
+    for (seed in seeds) {
+      # reg <- regs[1]
+      # seed <- seeds[1]
+      
+      # aux is the auxiliar variable that contains
+      # the data corresponding to fold "f" region "reg"
+      aux <- df
+      aux <- aux[aux[ ,"seed"  ]==seed,   ]
+      aux <- aux[aux[ ,"region"]==reg, ]
+      
+      # Z-SCORE
+      # (true - pred)/sigma
+      Z <- (aux$y_true - aux$y_pred)/aux$sigma
+      df[df[,"region"]==reg,][df[df[,"region"]==reg,][,"seed"]==seed,"Z-score"] <- Z
+
+      # aux is the auxiliar variable that contains
+      # the data corresponding to fold "f" region "reg"
+      aux <- df
+      aux <- aux[aux[ ,"seed"  ]==seed,   ]
+      aux <- aux[aux[ ,"region"]==reg, ]
+      
+      # T-TEST
+      # We get the previously calculated z-scores corresponding to controls and patients
+      z_hc  <- aux[aux[, "diagnose"]== "control", "Z-score"]
+      z_pat <- aux[aux[, "diagnose"]== "patient", "Z-score"]
+      
+      pval.ttest <- t.test(x = z_pat, y = z_hc, alternative = "two.sided",
+                           mu = 0, var.equal = TRUE, conf.level  = 0.95)$p.value
+      
+      ### CONTROLS
+      # We get the model predictions and the true values from the control data
+      pred_hc  <- aux[aux[, "diagnose"]== "control", "y_pred"]
+      true_hc  <- aux[aux[, "diagnose"]== "control", "y_true"]
+    
+      # CORRELATION COEFFICIENT
+      # "pearson" (default), "kendall", or "spearman"
+      corr.coef <- cor(pred_hc, true_hc)
+      
+      # Mean Absolute Error (MAE)
+      MAE <- mean_absolute_error(pred_hc, true_hc)
+      # Mean Squared Error (MSE)
+      MSE <- mean_squared_error(pred_hc, true_hc)
+    
+      # Standardized Mean Squared Error (SMSE)
+      # It is the MSE divided by the variance of the true values
+      # The less is the better. SMSE < 1 show that we learn something meaningful
+      SMSE <- MSE/var(true_hc)
+
+      # Standardized Mean Absolute Error (SMAE)
+      # It is the MAE divided by the deviation of the true values
+      # The less is the better. 
+      SMAE <- MAE/sd(true_hc)
+      
+      # Coefficient of determination (R2) (same as EV)
+      rss <- sum((pred_hc - true_hc) ^ 2)       # Residual Sum of Squares
+      tss <- sum((true_hc - mean(true_hc)) ^ 2) # Total Sum of Squares
+      r2  <- 1 - rss/tss
+    
+      metrics_df <- rbind(metrics_df, data.frame("region" = reg,
+                                           "seed"   = seed,
+                                           "diagnose"  = "control",
+                                           "corr" = round(corr.coef,5),
+                                           "MAE"  = round(MAE,5),
+                                           "MSE"  = round(MSE,5),
+                                           "SMSE" = round(SMSE,5),
+                                           "SMAE" = round(SMAE,5),
+                                           "R2"   = round(r2,5),
+                                           "pval t-test" = round(pval.ttest,5)))
+      
+      ### PATIENTS
+      # We get the model predictions and the true values from the patients data
+      pred_pat  <- aux[aux[, "diagnose"]== "patient","y_pred"]
+      true_pat  <- aux[aux[, "diagnose"]== "patient","y_true"]
+    
+      # CORRELATION COEFFICIENT
+      # "pearson" (default), "kendall", or "spearman"
+      corr.coef <- cor(pred_pat, true_pat)
+      
+      # Mean Absolute Error (MAE)
+      MAE <- mean_absolute_error(pred_pat, true_pat)
+      # Mean Squared Error (MSE)
+      MSE <- mean_squared_error(pred_pat, true_pat)
+    
+      # Standardized Mean Squared Error (SMSE)
+      # It is the MSE divided by the variance of the true values
+      # The less is the better. SMSE < 1 show that we learn something meaningful
+      SMSE <- MSE/var(true_pat)
+
+      # Standardized Mean Absolute Error (SMAE)
+      # It is the MAE divided by the deviation of the true values
+      # The less is the better. 
+      SMAE <- MAE/sd(true_pat)
+        
+      # Coefficient of determination (R2)
+      rss <- sum((pred_pat - true_pat) ^ 2)       # Residual Sum of Squares
+      tss <- sum((true_pat - mean(true_pat)) ^ 2) # Total Sum of Squares
+      r2  <- 1 - rss/tss
+    
+      metrics_df <- rbind(metrics_df, data.frame("region" = reg,
+                                           "seed"   = seed,
+                                           "diagnose"  = "patient",
+                                           "corr" = round(corr.coef,5),
+                                           "MAE"  = round(MAE,5),
+                                           "MSE"  = round(MSE,5),
+                                           "SMSE" = round(SMSE,5),
+                                           "SMAE" = round(SMAE,5),
+                                           "R2"   = round(r2,5),
+                                           "pval t-test" = round(pval.ttest,5))) 
+    }
+  }
+return(list("df" = df, 
+            "performance" = metrics_df))
+}
+```
+
+```{r include=FALSE}
+predictions_68M    <- read.csv("/data_J/Results/Files/predictions_10seeds_68M.csv")
+df <- predictions_68M
+metrics_68NoM <- extract_metrics_seed(df)
+performance_68M <- metrics_68NoM$performance
+performance_68M <- performance_68M[, c("region", "seed", "diagnose", "MAE", "MSE", "SMAE", "SMSE")]
+```
+
+```{r include=FALSE}
+# rm(predictions_308M, predictions_308NoM, predictions_68NoM, hc.performance_mean_sd, pat.performance_mean_sd)
+# rm(ylim.corr, ylim.smae, ylim.smse, ylim.r2)
+# rm(list=setdiff(ls(), c("metrics_68NoM", "performance_68M", extract_metrics_seed, "predictions_68M")))
+
+df <- performance_68M %>%
+    dplyr::group_by(seed, diagnose) %>%
+    dplyr::summarise(
+         # SD
+         MAE.sd = sd(MAE),
+         MSE.sd = sd(MSE),
+         SMAE.sd= sd(SMAE),
+         SMSE.sd= sd(SMSE),
+         # MEAN
+         MAE = mean(MAE),
+         MSE = mean(MSE),
+         SMAE= mean(SMAE),
+         SMSE= mean(SMSE))
+
+df[,"seed"][df[,"seed"]==123] <- 1
+df[,"seed"][df[,"seed"]==35] <- 2
+df[,"seed"][df[,"seed"]==23] <- 10
+df <- subset(df, diagnose=="control")
+```
+
+
+```{r}
+# por aqui
+p1 <- ggplot(df, aes_string(x="seed", y="MAE",
+                      group= "diagnose")) +
+  geom_point(aes(shape=diagnose), color="blue", size=4) +
+  geom_errorbar(aes(ymin=MAE-MAE.sd, ymax=MAE+MAE.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.position = "none",
+        axis.text.y  = element_text(size = 17),
+        axis.text.x  = element_text(size = 17)) +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+                     limits=c(0.5, 10.5),
+                     minor_breaks = NULL) +
+  geom_text(aes(label=round(MAE, 5)), vjust=-1, size=5, angle=90)
+
+
+p2 <- ggplot(df, aes_string(x="seed", y="MSE",
+                      group= "diagnose")) +
+  geom_point(aes(shape=diagnose), color="red", size=4) +
+  geom_errorbar(aes(ymin=MSE-MSE.sd, ymax=MSE+MSE.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        # axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.position = "none",
+        axis.text.y  = element_text(size = 17),
+        axis.text.x  = element_text(size = 17)) +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+                     limits=c(0.5, 10.5),
+                     minor_breaks = NULL) +
+  geom_text(aes(label=round(MSE, 5)), vjust=-1, size=5, angle=90)
+
+
+p3 <- ggplot(df, aes_string(x="seed", y="SMAE",
+                      group= "diagnose")) +
+  geom_point(aes(shape=diagnose), color="green", size=4) +
+  geom_errorbar(aes(ymin=SMAE-SMAE.sd, ymax=SMAE+SMAE.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        # axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.position = "none",
+        axis.text.y  = element_text(size = 17),
+        axis.text.x  = element_text(size = 17)) +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+                     limits=c(0.5, 10.5),
+                     minor_breaks = NULL) +
+  geom_text(aes(label=round(SMAE, 5)), vjust=-1, size=5, angle=90)
+
+
+p4 <- ggplot(df, aes_string(x="seed", y="SMSE",
+                      group= "diagnose")) +
+  geom_point(aes(shape=diagnose), color="orange", size=4) +
+  geom_errorbar(aes(ymin=SMSE-SMSE.sd, ymax=SMSE+SMSE.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        # axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.position = "none",
+        axis.text.y  = element_text(size = 17),
+        axis.text.x  = element_text(size = 17)) +
+  scale_x_continuous(breaks=c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+                     limits=c(0.5, 10.5),
+                     minor_breaks = NULL) +
+  geom_text(aes(label=round(SMSE, 5)), vjust=-1, size=5, angle=90)
+
+
+p1 <- p1 + scale_y_continuous(breaks=c(round(min(df$MAE-df$MAE.sd),2), round(max(df$MAE+df$MAE.sd),2)),
+                              limits=c(0.050, 0.110), minor_breaks = NULL)
+p2 <- p2 + scale_y_continuous(breaks=c(round(min(df$MSE-df$MSE.sd),2), round(max(df$MSE+df$MSE.sd),2)),
+                              limits=c(0.001, 0.0220), minor_breaks = NULL)
+p3 <- p3 + scale_y_continuous(breaks=c(round(min(df$SMAE-df$SMAE.sd),2), round(max(df$SMAE+df$SMAE.sd),2)),
+                              limits=c(0.32, 0.45), minor_breaks = NULL)
+p4 <- p4 + scale_y_continuous(breaks=c(round(min(df$SMSE-df$SMSE.sd),2), round(max(df$SMSE+df$SMSE.sd),2)),
+                              limits=c(0.16, 0.33), minor_breaks = NULL)
+
+figure <- ggarrange(p1, p2, p3, p4, ncol = 2, nrow = 2)
+
+figure <- annotate_figure(figure,
+                bottom = text_grob("Repetition of the 10-fold CV", 
+                                   face = "bold", size = 15, color = "black"))
+                
+#rm(p1, p2, p3, p4, figure, dev, diagnose, nreg, perc)
+```
+
+```{r echo=FALSE, fig.height=6, fig.width=10, message=FALSE, warning=FALSE}
+figure
+```

@@ -1,0 +1,2228 @@
+---
+title: "Normative modeling in Schizophrenia - Z.scores"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r, warning=F, message = F, echo = FALSE}
+#install.packages("easypackages")
+library("easypackages")
+
+list.of.packages <- c("viridis", "tidyverse", "MatchIt", "grid", "png", 
+                      "gridExtra", "parallel", "nlme", "JMbayes", "plyr",
+                      "BiocManager", "Biostrings", "lme4", "ggplot2", "dplyr",
+                      "Hmisc", "devtools", "longCombat", "neuroCombat", 
+                      "tinytex", "knitr", "ggExtra", "variancePartition",
+                      "Rmisc", "doParallel", "hrbrthemes", "cowplot", 
+                      "BiocParallel", "effectsize", "ggpubr", "caret", "scorer",
+                      "tidyr", "ggrepel")
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+  if(length(new.packages)>0) { install.packages(new.packages)}
+
+libraries(list.of.packages)
+
+rm(list.of.packages, new.packages)
+```
+
+
+```{r, eval = F, include = FALSE}
+tinytex::install_tinytex()
+install_github("jcbeer/longCombat")
+install_github("jfortin1/neuroCombatData")
+install_github("jfortin1/neuroCombat_Rpackage")
+BiocManager::install("BiocParallel")
+BiocManager::install("Biostrings")
+BiocManager::install("variancePartition")
+# install_version("dplyr", version = "1.0.5", repos = "http://cran.us.r-project.org")
+tinytex::install_tinytex()
+devtools::install_github("paulhendricks/scorer")
+```
+
+```{r setup I, echo=F}
+knitr::opts_chunk$set(
+  include = TRUE,  
+  echo    = TRUE, 
+  eval    = TRUE, 
+  warning = TRUE, 
+  message = TRUE,
+  cache   = T,
+  fig.width  = 10,
+  fig.height = 4,
+  error   = TRUE)
+```
+
+
+```{r warning=F, message = F, echo = FALSE}
+setwd("/data_J/Scripts")
+#source("1_DataPreparation.R")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#### LOAD DATA AND SIMPLIFY ####
+df  <- read.csv("/data_J/Results/Files/predictions_10seeds_68NoM_Z.csv") # predictions_68M
+#df  <- read.csv("/data_J/Results/Files/predictions_10seeds_68M_Z.csv") # predictions_68M
+df  <- df[df[,"seed"]==123, ] # Choose one seed
+df$Z.score <- round(df$Z.score, 3)
+df <- df[,c("seed", "region", "fold", "subID", "diagnose", "timepoint","Z.score")]
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(df, aes(x=Z.score)) + 
+    geom_histogram(aes(y=..density..), 
+                   binwidth=.1,
+                   colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666") +
+    labs(x = "Z-score",
+         y = "Density") +
+    theme_bw() + 
+    scale_colour_manual(name = " ",
+                        labels = c("Control", "Patient"), 
+                        values = c(adjustcolor("blue", alpha.f = 0.4), 
+                                   adjustcolor("red", alpha.f = 0.4))) +
+    # scale_y_log10() +
+    scale_x_continuous(breaks = c(-5, -3, -1.96, 1.96, 3, 5))+   
+    theme(legend.position="bottom") +
+    xlim(-5,5) +
+    ylim(0,0.6)
+
+#hist(df$Z.score)
+
+
+Z.pat <- subset(df, diagnose=="patient")
+Z.con <- subset(df, diagnose=="control")
+
+ggplot(Z.pat, aes(x=Z.score)) + 
+    geom_histogram(aes(y=..density..), 
+                   binwidth=.1,
+                   colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666") +
+    labs(x = "Z-score (patients)",
+         y = "Density") +
+    theme_bw() + 
+    scale_colour_manual(name = " ",
+                        labels = c("Control", "Patient"), 
+                        values = c(adjustcolor("blue", alpha.f = 0.4), 
+                                   adjustcolor("red", alpha.f = 0.4))) +
+    # scale_y_log10() +
+    scale_x_continuous(breaks = c(-5, -3, -1.96, 1.96, 3, 5))+   
+    theme(legend.position="bottom") +
+    xlim(-5,5) +
+    ylim(0,0.6)
+
+
+ggplot(Z.con, aes(x=Z.score)) + 
+    geom_histogram(aes(y=..density..), 
+                   binwidth=.1,
+                   colour="black", fill="white") +
+    geom_density(alpha=.2, fill="#FF6666") +
+    labs(x = "Z-score (controls)",
+         y = "Density") +
+    theme_bw() + 
+    scale_colour_manual(name = " ",
+                        labels = c("Control", "Patient"), 
+                        values = c(adjustcolor("blue", alpha.f = 0.4), 
+                                   adjustcolor("red", alpha.f = 0.4))) +
+    # scale_y_log10() +
+    scale_x_continuous(breaks = c(-5, -3, -1.96, 1.96, 3, 5))+   
+    theme(legend.position="bottom") +
+    xlim(-5,5) +
+    ylim(0,0.6)
+
+#hist(df$Z.score)
+```
+
+ 
+
+# Analysis of Z-scores and computation of global scores
+## DEVIANTS: SUPRADEVIANTS - INFRADEVIANTS
+
+
+In previous analyses, we obtained the $Zscores$ by applying the following formula:
+$$Zscore = \frac{y_{obs}-y_{pred}}{\sigma}$$ 
+
+
+Now, let's compare each $Zscore$ with 1.96 to find out which samples are deviant (supra-deviants: $Zscore>1.96$ or infra-deviants: $Zscore<-1.96$). The following table shows some results of said comparison:
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+Z <- df %>% 
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>%  # Overall deviant
+  dplyr::mutate(supradeviant = ifelse(`Z.score` >  1.96, 1, 0)) %>%  # Supradeviant
+  dplyr::mutate(infradeviant = ifelse(`Z.score` < -1.96, 1, 0)) %>%  # Infradeviant
+  dplyr::select(c("region", "subID", "diagnose", "timepoint","Z.score", 
+                  "deviant", "supradeviant", "infradeviant"))
+
+kable(head(Z[order(-Z[,"deviant"]), ]))
+```
+
+
+The first thing we are going to do is to have a look at the percentage of subjects (controls and patients) with a certain number of deviant regions, separating by timepoints. 
+
+**Example.** The following data and figures were obtained based on the models trained with the 68 regions and No-matched datased. Some meaningful information derived from the following plots would be:
+
+* For the first timepoint (`Timepoint 1' figure), a **27.98% of patients have 1 deviant region** while it is only the case for 23.55% of the healhty controls.
+
+* For the second timepoint (`Timepoint 2' figure), we see the **overlap of the HC and SZ curves** for most of the range. It 'proves' that HCs and SZs are largely 'identical'.
+
+* For the third timepoint (`Timepoint 3' figure), the **maximum number of deviant regions in the patients group is 22**, while in the controls group this is just 9 regions.
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+plot_n_reg_p_sub <- function(Z, tp) {
+  Zaux <- Z %>% 
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::group_by(diagnose, subID) %>%
+    dplyr::summarise(dev= sum(deviant==1),
+                     nondev = sum(deviant==0)) %>%
+    dplyr::group_by(diagnose, dev) %>%
+    dplyr::mutate(subjects = paste0(subID, collapse = ", ")) %>%
+    dplyr::group_by(dev, diagnose) %>%
+    dplyr::arrange(desc(dev)) %>%
+    dplyr::select(c("diagnose","dev","subjects")) %>%
+    dplyr::distinct()%>%
+    dplyr::rename(n_reg_dev = dev)  %>%
+    dplyr::filter(n_reg_dev>0) 
+
+
+  Z1 <- Z %>% 
+    dplyr::group_by(diagnose, subID, timepoint) %>%
+    dplyr::summarise(dev= sum(deviant==1),
+                     nondev = sum(deviant==0)) %>%
+    dplyr::select(c("diagnose","subID","timepoint","dev")) %>%
+    dplyr::group_by(diagnose, timepoint) %>%
+    dplyr::mutate(tot_sub = n()) %>% 
+    dplyr::filter(dev>0) %>%
+    dplyr::group_by(diagnose, timepoint, dev) %>%
+    dplyr::summarize(nsub_dev = n(),
+                     tot_sub = tot_sub) %>%
+    dplyr::distinct() %>%
+    dplyr::mutate(p_sub_dev = round(nsub_dev/tot_sub*100,2))  %>%
+    dplyr::rename(n_reg_dev = dev)  %>%
+    dplyr::select(c("diagnose","timepoint","n_reg_dev","p_sub_dev"))  %>%
+    dplyr::filter(timepoint==tp)
+  
+  Z1 <- merge(Z1, Zaux, by=c("diagnose","n_reg_dev"))
+
+  ggplot(Z1, aes(x=n_reg_dev, y=p_sub_dev, group=diagnose, color=diagnose)) +
+          geom_line( ) + 
+          geom_point( )+
+          labs(x = "Number of deviant regions",
+               y = "Percentage of subjects") +
+          theme_bw() + 
+          # geom_text_repel(aes(label = paste0(p_sub_dev,"%")),
+          #             data = Z1[-which(duplicated(Z1[,"p_sub_dev"])),],
+          #             size=5) +
+          scale_colour_manual(name = " ",
+                              labels = c("Controls", "Patients"), 
+                              values = c(adjustcolor("blue", alpha.f = 0.4), 
+                                         adjustcolor("red", alpha.f = 0.4))) +
+          scale_y_log10() +
+          scale_x_continuous(breaks = Z1$n_reg_dev)+   
+          # scale_x_continuous(breaks = c(min(Z1$n_reg_dev), max(Z1$n_reg_dev)))+   
+          theme(legend.position = c(.9, .8),
+                axis.text.y  = element_text(size = 15),
+                axis.text.x  = element_text(size = 15),
+                axis.title.y  = element_text(size = 17),
+                axis.title.x  = element_text(size = 17),
+                legend.text = element_text(size  = 15))
+  }
+```
+
+
+```{r echo=FALSE, fig.height=4, fig.width=10, message=FALSE, warning=FALSE}
+plot_n_reg_p_sub(Z, 1) 
+plot_n_reg_p_sub(Z, 2)
+plot_n_reg_p_sub(Z, 3)
+```
+
+
+
+
+***
+
+Next, we will examine which subjects the tails of the three timepoints correspond to:
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+plot_n_reg_p_sub <- function(Z, tp) {
+  Zaux <- Z %>% 
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::group_by(diagnose, subID) %>%
+    dplyr::summarise(dev= sum(deviant==1),
+                     nondev = sum(deviant==0)) %>%
+    dplyr::group_by(diagnose, dev) %>%
+    dplyr::mutate(subjects = paste0(subID, collapse = ", ")) %>%
+    dplyr::group_by(dev, diagnose) %>%
+    dplyr::arrange(desc(dev)) %>%
+    dplyr::select(c("diagnose","dev","subjects")) %>%
+    dplyr::distinct()%>%
+    dplyr::rename(n_reg_dev = dev)  %>%
+    dplyr::filter(n_reg_dev>0) 
+
+
+  Z1 <- Z %>% 
+    dplyr::group_by(diagnose, subID, timepoint) %>%
+    dplyr::summarise(dev= sum(deviant==1),
+                     nondev = sum(deviant==0)) %>%
+    dplyr::select(c("diagnose","subID","timepoint","dev")) %>%
+    dplyr::group_by(diagnose, timepoint) %>%
+    dplyr::mutate(tot_sub = n()) %>% 
+    dplyr::filter(dev>0) %>%
+    dplyr::group_by(diagnose, timepoint, dev) %>%
+    dplyr::summarize(nsub_dev = n(),
+                     tot_sub = tot_sub) %>%
+    dplyr::distinct() %>%
+    dplyr::mutate(p_sub_dev = round(nsub_dev/tot_sub*100,2))  %>%
+    dplyr::rename(n_reg_dev = dev)  %>%
+    dplyr::select(c("diagnose","timepoint","n_reg_dev","p_sub_dev"))  %>%
+    dplyr::filter(timepoint==tp)
+  
+  Z1 <- merge(Z1, Zaux, by=c("diagnose","n_reg_dev"))
+
+  ggplot(Z1, aes(x=n_reg_dev, y=p_sub_dev, group=diagnose, color=diagnose)) +
+          geom_line( ) + 
+          geom_point( )+
+          labs(x = "# deviant results",
+               y = "% of subjects",
+               title = paste0("Timepoint ",tp)) +
+          theme_bw() + 
+          geom_text_repel(aes(label = subjects),
+                           data = Z1[with(Z1,order(-n_reg_dev)),][1:8,],
+                          segment.color = 'grey80') +
+          scale_colour_manual(name = " ",
+                              labels = c("Control", "Patient"), 
+                              values = c(adjustcolor("blue", alpha.f = 0.4), 
+                                         adjustcolor("red", alpha.f = 0.4))) +
+          scale_y_log10() +
+          scale_x_continuous(breaks = Z1$n_reg_dev)+   
+          theme(legend.position="bottom")
+}
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+plot_n_reg_p_sub(Z, 1)
+plot_n_reg_p_sub(Z, 2)
+plot_n_reg_p_sub(Z, 3)
+```
+
+
+```{r include=FALSE}
+rm(plot_n_reg_p_sub)
+```
+
+Patients 114 and 810 show a large amount of deviant regions in two out of the three timepoints.
+
+***
+ 
+
+
+In the following, we're going to be having a look at the percentage of subjects who deviate (controls and patients) for each region, separating by timepoints. 
+
+**Example.** The following data and figures were obtained based on the models trained with the 68 regions and No-matched datased. Some meaningful information derived from the following plots would be:
+
+* For the first timepoint (`Timepoint 1' figure), 47 out of 68 regions have a higher percentage of patients who deviate rather than controls who deviate.
+
+* For the third timepoint (`Timepoint 3' figure), the **maximum percentage of patients who deviate for a specific region (lh_parsopercularis) is 10.2% **, while for the same region there is only a 0.96% of controls who deviate from the norm.
+
+
+
+```{r include=FALSE}
+plot_reg_p_sub <- function(Z, tp) {
+  Z1 <- Z
+  new.colnames <- sub("_CT_freesurfer", "",Z1$region) 
+  Z1$region <- new.colnames
+  new.colnames <- sub("lh_", "left ",Z1$region) 
+  Z1$region <- new.colnames
+  new.colnames <- sub("rh_", "right ",Z1$region) 
+  Z1$region <- new.colnames
+  
+  Z2 <- Z1 %>%
+    dplyr::group_by(region, diagnose, timepoint) %>%
+    dplyr::summarise(n_sub_dev= sum(deviant==1),
+                     n_sub_nondev = sum(deviant==0)) %>%
+    dplyr::mutate(tot_sub = n_sub_dev+n_sub_nondev) %>% 
+    dplyr::select(c("region","diagnose","timepoint","n_sub_dev", "tot_sub")) %>% 
+    dplyr::mutate(p_sub_dev = ifelse(n_sub_dev > 0, round(n_sub_dev/tot_sub*100,2), 0)) %>% 
+    dplyr::select(c("region","diagnose","timepoint","p_sub_dev")) %>%
+    dplyr::filter(timepoint==tp)  
+  
+  # To see in which regions the Zscore is bigger for patients:
+  Zaux_pat <- Z2 %>%
+    dplyr::filter(diagnose=="patient")  
+  Zaux_hc <- Z2 %>%
+    dplyr::filter(diagnose=="control")  
+  Zaux <- (Zaux_pat[,"p_sub_dev"] - Zaux_hc[,"p_sub_dev"] )%>% 
+    dplyr::mutate(big_pat = ifelse(p_sub_dev > 0, 1, 0))
+  Zaux["Region"] <- unique(Z2$region)
+  Zaux <- Zaux %>%  
+    dplyr::filter(big_pat==1)
+  #cat(nrow(Zaux))
+
+  data_new1 <- Z2[order(Z2$p_sub_dev, decreasing = TRUE), ]  # Order data descending
+  data_new1 <- data_new1[!duplicated(data_new1[,'p_sub_dev']),]
+  data_new1 <- data_new1[1:5,]
+  data_new1
+
+
+  ggplot(Z2, aes(x=region, y=p_sub_dev, group=diagnose, color=diagnose)) +
+          geom_line( ) + 
+          geom_point( )+
+          ylim(0,10.3)+
+          labs(x = "Region",
+               y = "Percentage of subjects") +
+               # title = paste0("Timepoint ",tp, "\n(",nrow(Zaux),
+               #                "/68 regions have more % of patients who deviate)")) +
+          theme_bw() + 
+          # geom_text_repel(aes(label = p_sub_dev),
+          #             data = Z2[-which(duplicated(Z2[,"p_sub_dev"])),]) +
+          scale_colour_manual(name = " ",
+                              labels = c("Control", "Patient"), 
+                              values = c(adjustcolor("blue", alpha.f = 0.4), 
+                                         adjustcolor("red", alpha.f = 0.4))) +
+          # scale_x_discrete(breaks = seq(1, 68, 1))+ 
+          # scale_x_discrete(breaks = Zaux$Region)+   
+          scale_x_discrete(breaks = data_new1$region)+   
+          theme(legend.position="right")+
+          theme(axis.text.x=element_text(angle=45, hjust=1))
+}
+```
+
+ 
+
+```{r echo=FALSE, fig.height=4, fig.width=10, message=FALSE, warning=FALSE}
+plot_reg_p_sub(Z, 1)
+plot_reg_p_sub(Z, 2)
+plot_reg_p_sub(Z, 3)
+```
+
+
+
+**Note that:** only the names of the 5 regions for which the percentage of patients who deviate is higher than that of controls who deviate are visible on the x-axis.
+
+
+
+Percentage of subjects with at least one region infra-normal-deviated. 
+
+Patients vs Healthy controls and percentage of subjects with at least one region supra-normal-deviated. 
+
+Patients vs Healthy controls.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+rm(DF_Z, Z, concatenated, timepoint)
+for (tp in 1:3){ # for each timepoint
+  Z <- df %>%
+    dplyr::filter(timepoint==tp)    %>%
+    dplyr::mutate(deviant_infra = ifelse(`Z.score` < -1.96, 1, 0))%>% # Infra-normal
+    dplyr::mutate(deviant_supra = ifelse(`Z.score` > 1.96, 1, 0)) %>% # Supra-normal
+    dplyr::group_by(subID, diagnose) %>%
+    dplyr::summarise(nreg_dev_infra = sum(deviant_infra==1),  # At least one region deviated
+                     nreg_dev_supra = sum(deviant_supra==1)) %>%
+    dplyr::mutate(deviant_infra = ifelse(nreg_dev_infra>0, 1, 0),# At least one region deviated
+                  deviant_supra = ifelse(nreg_dev_supra>0, 1, 0)) %>%
+    dplyr::group_by(diagnose) %>%
+    dplyr::summarise(pat_dev_infra = sum(deviant_infra==1),
+              pat_nondev_infra = sum(deviant_infra==0),
+              pat_dev_supra    = sum(deviant_supra==1),
+              pat_nondev_supra = sum(deviant_supra==0)) %>%
+    dplyr::mutate(perc_dev_infra = round(100* pat_dev_infra/(pat_dev_infra+pat_nondev_infra),2),
+                  perc_dev_supra = round(100* pat_dev_supra/(pat_dev_supra+pat_nondev_supra),2))
+  
+  control_infra  <- Z$perc_dev_infra[1]
+  patient_infra  <- Z$perc_dev_infra[2]
+
+  control_supra  <- Z$perc_dev_supra[1]
+  patient_supra  <- Z$perc_dev_supra[2] 
+
+cat("\n+ Timepoint", tp,": Infra-normal deviations for at least one region were evident in:\n ", paste0(patient_infra,"% of patients, whereas this was the case for ", control_infra,"% of healthy controls.\n"))
+cat("+ Timepoint", tp,": Supra-normal deviations for at least one region were evident in:\n ", paste0(patient_supra,"% of patients, whereas this was the case for ", control_supra,"% of healthy controls.\n"))}
+
+```
+
+***
+
+Most common regions with infra-normal deviations. Percentage of patients.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+for (tp in 1:3){ # for each timepoint
+  Z_all <- df %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(deviant_infra = ifelse(`Z.score` < -1.96, 1, 0))%>% # Infra-normal
+    dplyr::mutate(deviant_supra = ifelse(`Z.score` > 1.96, 1, 0)) %>% # Supra-normal
+    dplyr::group_by(region) %>%
+    dplyr::summarise(nreg_dev_infra = sum(deviant_infra==1),
+                     nreg_nondev_infra = sum(deviant_infra==0),# At least one region deviated
+                     nreg_dev_supra = sum(deviant_supra==1),
+                     nreg_nondev_supra = sum(deviant_supra==0)) %>%
+    dplyr::mutate(perc_dev_infra = round(100* nreg_dev_infra/(nreg_dev_infra+nreg_nondev_infra),2),
+                  perc_dev_supra = round(100* nreg_dev_supra/(nreg_dev_supra+nreg_nondev_supra),2))
+  
+  Z_all <- Z_all %>%
+    dplyr::arrange(desc(perc_dev_infra))
+  reg <- as.character(Z_all[1,"region"])
+  cat("+ Timepoint", tp,": The region with the most infra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev_infra),"%)")," \n")
+  
+  Z_all <- Z_all %>%
+    dplyr::arrange(desc(perc_dev_supra))
+  reg <- as.character(Z_all[1,"region"])
+  
+  cat("+ Timepoint", tp,": The region with the most supra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev_supra),"%)")," \n \n")}
+```
+
+
+ 
+
+
+Fig A:
+
+In the x-axis we have the 3 different time points: BL, First FU and Second FU. In the y-axis we have the number of regions deviating from the LN Model. 
+What we can see in this graphic, across the 3 time points, is that it is more common for the patients to be deviated from the normative range rather than controls. For example, for the first FU, this red bar would mean that in 55 out of 68 total regions, there are more patients than controls that deviate from the LNModel. This also indicates that Cortical deviance is widespread in patients.
+
+Fig B:
+
+In the x-axis we have the 3 different time points: BL, First FU and Second FU. In the y-axis we have the maximum number of regions deviating from the LN Model for a subject. This max number is higher in patients and the maximum difference lies in the second timepoint. 
+
+```{r echo=FALSE, fig.height=3, fig.width=8, message=FALSE, warning=FALSE}
+######## PLOT 1 ############
+
+# DATA
+dev       = c(21, 13, 16, 47, 55, 52)
+timepoint = c("Scan1","Scan2","Scan3","Scan1","Scan2","Scan3")
+diagnose  = c(0,0,0,1,1,1)
+
+DF_Z <- data.frame("diagnose" = as.factor(diagnose), 
+                   "timepoint"= as.factor(timepoint),
+                   "ndev"     = as.numeric(dev))
+
+rm(dev, timepoint, diagnose)
+
+# PLOT 1
+p1 <- ggplot(DF_Z, aes(x = timepoint, y=ndev, fill=diagnose))  +  
+  geom_bar(stat = "identity", position=position_dodge()) +
+  labs(x = " ",
+       y = "# regions",
+       title = "A. Regions deviated from \nthe normative range") +
+  theme_bw()  +
+  ylim(c(0,60)) +
+  # geom_text_repel(aes(label = paste0(p_sub_dev,"%")),
+  #             data = Z1[-which(duplicated(Z1[,"p_sub_dev"])),]) +
+  geom_text(aes(label = paste0(ndev," /68")),
+            position = position_dodge(width = 1),
+            vjust = -0.1 ) +
+  scale_fill_manual(name = " ",
+                      labels = c("Control", "Patient"),
+                      values = c(adjustcolor("blue", alpha.f = 0.4),
+                                 adjustcolor("red", alpha.f = 0.4))) +
+  theme(legend.position="bottom")
+
+######## PLOT 2 ############
+
+# DATA
+dev       = c(24, 12, 9, 35, 30, 22)
+timepoint = c("Scan1","Scan2","Scan3","Scan1","Scan2","Scan3")
+diagnose  = c(0,0,0,1,1,1)
+
+DF_Z <- data.frame("diagnose" = as.factor(diagnose), 
+                   "timepoint"= as.factor(timepoint),
+                   "ndev"     = as.numeric(dev))
+
+rm(dev, timepoint, diagnose)
+
+# PLOT 2
+p2 <- ggplot(DF_Z, aes(x = timepoint, y=ndev, fill=diagnose))  +  
+  geom_bar(stat = "identity", position=position_dodge()) +
+  labs(x = " ",
+       y = " ",
+       title = "B. Max. number of deviated \n regions for a subject") +
+  theme_bw()  +
+  ylim(c(0, 60)) +
+  # geom_text_repel(aes(label = paste0(p_sub_dev,"%")),
+  #             data = Z1[-which(duplicated(Z1[,"p_sub_dev"])),]) +
+  geom_text(aes(label = ndev),
+            position = position_dodge(width = 1),
+            vjust = -0.1 ) +
+  scale_fill_manual(name = " ",
+                      labels = c("Control", "Patient"),
+                      values = c(adjustcolor("blue", alpha.f = 0.4),
+                                 adjustcolor("red", alpha.f = 0.4))) +
+  theme(legend.position="bottom")
+
+
+
+ggarrange(p1, p2, ncol = 2, nrow = 1,
+          legend = "right", common.legend = TRUE)
+
+#rm(p1,p2)
+```
+
+
+
+
+
+Number of subjects that are **deviant at timepoint 1** and stay **deviant in subsequent timepoints**, for each region. 
+
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, include=FALSE}
+Z1 <- df %>%
+  dplyr::mutate(dev = ifelse((`Z.score` < -1.96 | `Z.score` > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev))  %>%
+  dplyr::filter(mul==1)
+
+Z <- df %>%
+  dplyr::mutate(dev = ifelse((`Z.score` < -1.96 | `Z.score` > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev)) %>% # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region) %>%           # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+
+Z3 <- df %>%
+  dplyr::mutate(dev = ifelse((`Z.score` < -1.96 | `Z.score` > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID, diagnose) %>%
+  dplyr::summarise(mul = prod(dev)) %>% # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region, diagnose) %>%           # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(region)
+
+Zcon <- Z3[Z3[,"diagnose"]=="control","sol"]
+Zpat <- Z3[Z3[,"diagnose"]=="patient","sol"]
+ZBV <- Zpat-Zcon 
+ZBV["region"] <- unique(Z3$region)
+paste0(ZBV$sol, collapse=",")
+
+
+
+library(data.table)
+ZBV[ZBV$region %like% "lh_", "region"]
+ZBV[ZBV$region %like% "rh_", ]
+
+
+write.csv(ZBV,  "/data_J/tolocal/Zs_all_tp_dev.csv",   row.names = FALSE) #FSBRAIN
+# Positivo: hay más pacientes que se desvian en todos sus timepoints en estas regiones.
+# Negativo: hay más controles que se desvian en todos sus timepoints en estas regiones.
+# Cero: no hay ningun paciente/control que se desvíe en todos sus timepoints en estas regiones.
+
+
+max  <- max(Z$sol)
+perc <- round(max*100/length(unique(df$subID)),3) # Percentage in the text
+```
+
+```{r echo=FALSE, comment=NA}
+cat("\nA maximum of ",max,"subjects ",paste0("(",perc,"%")," of total subjects) fulfill that condition for any region.")
+cat("\nTotal number of regions in which at least one subject deviates during all its timepoints:",length(unique(Z1$region)))
+cat("\nTotal number of subjects deviating during all their timepoints in any region:", length(unique(Z1$subID)))
+cat("\nTotal perc of subjects deviating during all their timepoints in any region:", round(length(unique(Z1$subID))*100/length(unique(df$subID)),3))
+
+
+kable(head(Z,3))
+
+# sort(table(Z1$subID))     # Número de regiones en las que se desvía cada sujeto
+# length(unique(Z1$region)) # Número total de regiones en las que se desvía al menos un sujeto durante todos sus timepoint
+# length(Z1$subID)          # Número total de sujetos que se desvían durante todos sus timepoint en alguna región
+```
+
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+Z <- df %>%
+  dplyr::mutate(dev = ifelse((`Z.score` < -1.96 | `Z.score` > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID, diagnose) %>%
+  dplyr::summarise(mul = prod(dev)) %>%       # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region,diagnose)     %>%       # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul))  %>%
+  dplyr::arrange(desc(sol))
+
+df1<-subset(df, timepoint==1)
+df2<-subset(df1, diagnose=="control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, diagnose=="control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3)
+cat("\nA maximum of",max,"controls ",paste0("(",perc,"%"),"of total) fulfill that condition for any region.")
+
+
+df1<-subset(df, timepoint==1)
+df2<-subset(df1, diagnose=="patient")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, diagnose=="patient")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3)
+cat("\nA maximum of",max,"patients ",paste0("(",perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+***
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+#####
+Z_pat <- df %>%
+  # Si se desvía vale 1 la columna "dev":
+  dplyr::mutate(dev = ifelse((`Z.score` < -1.96 | `Z.score` > 1.96), 1, 0)) %>%  
+  # Agrupamos por region y subID:
+  dplyr::group_by(region, subID, diagnose) %>%
+  # Multiplicamos la columna dev de todos los timepoints de cada sujeto/región
+  dplyr::summarise(mul = prod(dev))  %>%
+  # Filtramos los que han dado 1 (todos los timepoint se desvían para estos sujetos/region)
+  dplyr::filter(mul==1)   %>%
+  dplyr::mutate(region = sub("_CT_freesurfer", " ", region) ) %>%
+  dplyr::filter(diagnose=="patient")
+
+dev_pat <- nrow(Z_pat)*100/length(unique(df[df$diagnose=="patient","subID"]))
+
+Z_con <- df %>%
+  # Si se desvía vale 1 la columna "dev":
+  dplyr::mutate(dev = ifelse((`Z.score` < -1.96 | `Z.score` > 1.96), 1, 0)) %>%  
+  # Agrupamos por region y subID:
+  dplyr::group_by(region, subID, diagnose) %>%
+  # Multiplicamos la columna dev de todos los timepoints de cada sujeto/región
+  dplyr::summarise(mul = prod(dev))  %>%
+  # Filtramos los que han dado 1 (todos los timepoint se desvían para estos sujetos/region)
+  dplyr::filter(mul==1)   %>%
+  dplyr::mutate(region = sub("_CT_freesurfer", " ", region) ) %>%
+  dplyr::filter(diagnose=="control")
+
+dev_con <- nrow(Z_con)*100/length(unique(df[df$diagnose=="control","subID"]))
+
+cat("A", paste0(round(dev_pat,2),"%"), "of the patients deviated from the normative model for all its timepoints \nfor at least one cortical region.")
+
+cat("\nA", paste0(round(dev_con,2),"%"), "of the controls deviated from the normative model for all its timepoints \nfor at least one  cortical region.")
+
+rm(Z_con, Z_pat, dev_con, dev_pat)
+```
+***
+
+Number of subjects that are **not deviant at timepoint 1** but become **deviant in subsequent timepoints**, for each region. 
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# Los que cumplen la condición valen 1, el resto 0. Al multiplicar sólo dan 1 los que cumplen la condición.
+Z <- df %>%
+  dplyr::mutate(non_dev_tp1 = ifelse((`Z.score` > -1.96 | `Z.score` < 1.96)&timepoint==1, 1, 0), # Si no se desvía en tp1 vale 1
+         dev_fup = ifelse((`Z.score` < -1.96 | `Z.score` > 1.96)&timepoint>1, 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::mutate(cond=non_dev_tp1+dev_fup)%>% # Sumamos ambas columnas para obtener una sólo
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
+  dplyr::group_by(region) %>%            # Así, sólo valen 1 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+max <- max(Z$sol)
+df1 <-subset(df,timepoint==1)
+n   <-length(unique(df1$subID))
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"subjects",paste0("(",perc,"%"),"of total) fulfill that condition for any region.")
+kable(head(Z,3))
+```
+
+
+
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+Z <- df %>%
+  dplyr::mutate(non_dev_tp1 = ifelse((`Z.score` > -1.96 | `Z.score` < 1.96)&timepoint==1, 1, 0), # Si no se desvía en tp1 vale 1
+         dev_fup = ifelse((`Z.score` < -1.96 | `Z.score` > 1.96)&timepoint>1, 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::mutate(cond=non_dev_tp1+dev_fup)%>% # Sumamos ambas columnas para obtener una sólo
+  dplyr::group_by(region, subID, diagnose) %>%
+  dplyr::summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
+  dplyr::group_by(region, diagnose) %>%  # Así, sólo valen 1 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+df1<-subset(df, timepoint==1)
+df2<-subset(df1, diagnose=="control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, diagnose=="control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3)
+cat("\nA maximum of",max,"controls ",paste0("(",perc,"%"),"of total) fulfill that condition for any region.")
+
+df1<-subset(df, timepoint==1)
+df2<-subset(df1, diagnose=="patient")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, diagnose=="patient")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3)
+cat("\nA maximum of",max,"patients ",paste0("(",perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Los que cumplen la condición valen 1, el resto 0. Al multiplicar sólo dan 1 los que cumplen la condición.
+Z <- df %>%
+  dplyr::mutate(dev = ifelse((`Z.score` < -1.96 | `Z.score` > 1.96), 1, 0)) %>% # Si se desvía vale 1
+  dplyr::mutate(non_dev_tp1 = ifelse(dev==0&timepoint==1, 1, 0), # Si no se desvía en tp1 vale 1
+                    dev_fup = ifelse(dev==1&timepoint>1, 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::mutate(cond=non_dev_tp1+dev_fup)%>% # Sumamos ambas columnas para obtener una sólo
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
+  dplyr::group_by(region) %>%            # Así, sólo valen 1 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+kable(head(Z,3))
+```
+
+***
+
+ 
+
+Rendimiento de los modelos: 
+
+
+```{r echo=FALSE, fig.height=3, fig.width=8, message=FALSE, warning=FALSE, comment=NA}
+# DATA
+mean      = c(0.24, 0.38, 0.77)
+sd        = c(0.06, 0.05, 0.06)
+metric = c("Standardized Mean \nSquared Error (SMSE)","Standardized Mean \nAbsolute Error (SMAE)","R-squared (R²)")
+
+DF_Z <- data.frame("metric" = as.factor(metric),
+                   "mean"   = as.numeric(mean),
+                   "sd"     = as.numeric(sd))
+
+rm( sd, metric)
+
+
+c3 <- "orange"
+c1 <- "coral"
+c2 <- "mediumseagreen"
+
+# PLOT
+ggplot(DF_Z, aes(x = mean, y=metric, fill=metric))  +  
+  geom_bar(stat = "identity", width = 0.3) +
+  geom_errorbar(aes(xmin=mean-sd, xmax=mean+sd), width=.2, color="black", alpha=0.6) +
+  labs(x = " ",
+       #y = " ",
+       #title = "Performance metrics across the 68 models") +
+       title = " ") +
+  theme_bw()  +
+  xlim(0,1) + 
+  scale_x_continuous(breaks=c(0, 0.24, 0.38, 0.77, 1.0),
+                     limits=c(0, 1),
+                     minor_breaks = NULL) +
+  geom_vline(xintercept=mean, linetype="dotted") +
+  theme(legend.position = "none",
+        axis.text.x = element_text(color="black", size=14, face = c('plain', 'bold', 'bold', 'bold', 'plain'))) +
+  scale_fill_manual(values = c("Standardized Mean \nSquared Error (SMSE)" = c3,
+                                "Standardized Mean \nAbsolute Error (SMAE)" = c1,
+                                "R-squared (R²)" = c2)) +
+  # scale_fill_manual(values = c(c1, c1, c2)) +
+   theme(axis.title.y=element_blank(),
+        # axis.text.y=element_blank(),
+        axis.text.y=element_text(size=15),
+        axis.text.x=element_text(size=18),
+        axis.ticks.y=element_blank())
+```
+
+
+***
+
+ 
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+#### LOAD DATA AND SIMPLIFY ####
+df  <- read.csv("/data_J/Results/Files/predictions_10seeds_68NoM_Z.csv")
+df  <- df[df[,"seed"]==123, ] # Change seed to compare results
+df$Z.score <- round(df$Z.score, 3)
+df <- df[,c("seed", "region", "fold", "subID", "diagnose", "timepoint","Z.score")]
+predictions_68NoM <- df
+
+#
+df  <- read.csv("/data_J/Results/Files/predictions_10seeds_68M_Z.csv")
+df  <- df[df[,"seed"]==123, ] # Change seed to compare results
+df$Z.score <- round(df$Z.score, 3)
+df <- df[,c("seed", "region", "fold", "subID", "diagnose", "timepoint","Z.score")]
+predictions_68M <- df
+
+#
+df  <- read.csv("/data_J/Results/Files/predictions_10seeds_308NoM_Z.csv")
+df  <- df[df[,"seed"]==123, ] # Change seed to compare results
+df$Z.score <- round(df$Z.score, 3)
+df <- df[,c("seed", "region", "fold", "subID", "diagnose", "timepoint","Z.score")]
+predictions_308NoM <- df
+
+#
+df  <- read.csv("/data_J/Results/Files/predictions_10seeds_308M_Z.csv")
+df  <- df[df[,"seed"]==123, ] # Change seed to compare results
+df$Z.score <- round(df$Z.score, 3)
+df <- df[,c("seed", "region", "fold", "subID", "diagnose", "timepoint","Z.score")]
+predictions_308M <- df
+rm(df, df_reg_fold_pat, reg, reg_name, DataPreprocessing, getData, df_68)
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+Z <- predictions_68NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose) %>%
+  dplyr::summarise(nreg_dev    = sum(deviant==1),
+                   nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose) %>%
+  dplyr::mutate(tot = sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev    = round(nreg_dev*100/tot,2),
+                perc_nondev = round(nreg_nondev*100/tot,2))
+
+diagnose = rep(Z$diagnose, 2)
+dev      = c(1,1,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+DF_Z <- data.frame("diagnose"=diagnose, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+DF_Z <- subset(DF_Z, dev==1)
+
+p1 <- ggplot(DF_Z, aes(x = diagnose, y=perc, fill=diagnose)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(label=paste0(perc,"%")), vjust=1.6, size=3.5)+
+  labs(color = "Z\n",
+       title="68 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text = element_blank(),
+        axis.title= element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Control","Patient"), values=c("midnightblue","green4"))
+  
+  
+#######
+Z <- predictions_308NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+diagnose = rep(Z$diagnose,2)
+dev      = c(1,1,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+DF_Z <- data.frame("diagnose"=diagnose, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+DF_Z <- subset(DF_Z, dev==1)
+p2 <- ggplot(DF_Z, aes(x = diagnose, y=perc, fill=diagnose)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(label=paste0(perc,"%")), vjust=1.6, size=3.5)+
+  labs(color = "Z\n",
+       title="308 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text = element_blank(),
+        axis.title= element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Control","Patient"), values=c("midnightblue","green4"))
+
+  
+  
+######
+Z <- predictions_68M %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+diagnose = rep(Z$diagnose,2)
+dev      = c(1,1,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+DF_Z <- data.frame("diagnose"=diagnose, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+DF_Z <- subset(DF_Z, dev==1)
+
+p3 <- ggplot(DF_Z, aes(x = diagnose, y=perc, fill=diagnose)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(label=paste0(perc,"%")), vjust=1.6, size=3.5)+
+  labs(color = "Z\n",
+       title="68 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text = element_blank(),
+        axis.title= element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Control","Patient"), values=c("midnightblue","green4"))
+
+#####
+Z <- predictions_308M %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+diagnose = rep(Z$diagnose,2)
+dev      = c(1,1,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+DF_Z <- data.frame("diagnose"=diagnose, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+DF_Z <- subset(DF_Z, dev==1)
+
+p4 <- ggplot(DF_Z, aes(x = diagnose, y=perc, fill=diagnose)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(label=paste0(perc,"%")), vjust=1.6, size=3.5)+
+  labs(color = "Z\n",
+       title="308 regions (Match-it)",
+       x = " ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text = element_blank(),
+        axis.title= element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Control","Patient"), values=c("midnightblue","green4"))
+
+#rm(p1, p2, p3, p4, figure, dev, diagnose, nreg, perc)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+figure <- ggarrange(p1, p2, p3, p4, ncol = 2, nrow = 2,
+                    legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentages", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("diagnose", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Analysis of regions deviant (|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure <- ggarrange(p1, legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentages", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("diagnose", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Analysis of regions deviant (|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+
+```
+
+
+
+
+# TIMEPOINTS
+
+```{r echo=FALSE, fig.height=4, fig.width=10, message=FALSE, warning=FALSE}
+Z <- predictions_68NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.5, -0.5))
+
+DF_Z <- subset(DF_Z, dev==1)
+p3 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust), size=5)+
+  labs(color = "Z\n",
+       title="68 regions (NO Match-it)",
+       x =" ",
+       y = "percentage of deviance") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        # plot.title   = element_text(size=14),
+        axis.text=element_text(size=18),
+        axis.title.y=element_text(size=18),
+        axis.title.x=element_blank(),
+        legend.title = element_blank(),
+        legend.text = element_text(size=18),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4")) +
+  scale_x_discrete(breaks=c(1,2,3),
+                  labels=c("timepoint 1","timepoint 2","timepoint 3"))
+
+p3
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+Z <- predictions_68NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev    = sum(deviant==1),
+                   nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot = sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev    = round(nreg_dev*100/tot,2),
+                perc_nondev = round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+#########################################################
+p1 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="68 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+
+#######
+Z <- predictions_308NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+p2 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="308 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+  
+######
+Z <- predictions_68M %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+p3 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="68 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+
+#####
+Z <- predictions_308M %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+p4 <- ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="308 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+```
+
+
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+figure <- ggarrange(p1, p2, p3, p4, ncol = 2, nrow = 2,
+                    legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentage of deviation", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("timepoint", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Analysis of regions deviant (|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure <- ggarrange(p1, legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentage of deviation", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("timepoint", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Analysis of regions deviant (|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+```
+
+
+# INFRADEVIANTS
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+Z <- predictions_68NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+#########################################################
+p1 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="68 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+
+#######
+Z <- predictions_308NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 , 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+p2 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="308 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+  
+######
+Z <- predictions_68M %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 , 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+p3 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="68 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+
+#####
+Z <- predictions_308M %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 , 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+p4 <- ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="308 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+```
+
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+figure <- ggarrange(p1, p2, p3, p4, ncol = 2, nrow = 2,
+                    legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentage of deviation", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("timepoint", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Analysis of regions deviant (|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure <- ggarrange(p1,  legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentage of deviation", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("timepoint", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Infra-deviants ( Z< -1.96 )\n", 
+                                face = "bold", size = 15, color = "black"))
+```
+
+
+# SUPRADEVIANTS
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+Z <- predictions_68NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+#########################################################
+p1 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="68 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+
+#######
+Z <- predictions_308NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+p2 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="308 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+  
+######
+Z <- predictions_68M %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+p3 <-   ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="68 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+
+#####
+Z <- predictions_308M %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+Z$concatenated <- paste0(substr(Z$diagnose, 1, 3),Z$timepoint)
+
+concatenated = rep(Z$concatenated,2)
+dev      = c(1,1,1,1,1,1,0,0,0,0,0,0)
+nreg     = c(Z$nreg_dev, Z$nreg_nondev)
+perc     = c(Z$perc_dev, Z$perc_nondev)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "concatenated"=concatenated, "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          concatenated = as.factor(concatenated),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+DF_Z <- subset(DF_Z, dev==1)
+p4 <- ggplot(DF_Z) + 
+  geom_bar(aes(fill=diagnose, x=timepoint, y=perc),
+           position="dodge", stat="identity", alpha=0.3)+
+  geom_text(aes(x=timepoint, y=perc, label=paste0(perc,"%"),
+                vjust=1.6, hjust = hjust))+
+  labs(color = "Z\n",
+       title="308 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+figure <- ggarrange(p1, p2, p3, p4, ncol = 2, nrow = 2,
+                    legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentage of deviation", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("timepoint", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Analysis of regions deviant (|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure <- ggarrange(p1, legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentage of deviation", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("timepoint", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Supra-deviants ( Z>1.96 )\n", 
+                                face = "bold", size = 15, color = "black"))
+```
+
+
+
+# INFRADEVIANTS & SUPRADEVIANTS
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+Z <- predictions_68NoM %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` > -1.96 & `Z.score` < 1.96, 0, `Z.score`)) %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96, -1, deviant)) %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` >  1.96, 1 , deviant)) %>%
+  dplyr::group_by(diagnose, timepoint) %>% 
+  dplyr::summarise(nreg_dev_pos = sum(deviant==1),
+              nreg_nondev = sum(deviant==0),
+              nreg_dev_neg = sum(deviant==-1))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev_neg+nreg_dev_pos+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev_pos=round(nreg_dev_pos*100/tot,2),
+                perc_dev_neg=round(nreg_dev_neg*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+dev      = c(1,1,1,1,1,1,-1,-1,-1,-1,-1,-1)
+nreg     = c(Z$nreg_dev_pos, Z$nreg_dev_neg)
+perc     = c(Z$perc_dev_pos, Z$perc_dev_neg)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+DF_Z <- DF_Z %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(vjust=cumsum(perc))
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          vjust = as.numeric(vjust),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+p1 <- ggplot(DF_Z)+ 
+  geom_bar(aes(x = timepoint, y=vjust, fill=diagnose),
+    stat="identity", alpha=0.3, position="dodge") +
+  geom_text(aes(x=timepoint, y=vjust, label=paste0(perc,"%"),
+                vjust=vjust, hjust = hjust), color="black",
+            position=position_dodge(0.9)) +
+  labs(col = " ",
+       title="68 regions (NO Match-it)",
+       x =" ",
+       y = " ",
+       text="infr") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients", "3", "4"), values=c("midnightblue","green4", "yellow", "blue"))
+
+##############
+Z <- predictions_308NoM %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` > -1.96 & `Z.score` < 1.96, 0, `Z.score`)) %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96, -1, deviant)) %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` >  1.96, 1 , deviant)) %>%
+  dplyr::group_by(diagnose, timepoint) %>% 
+  dplyr::summarise(nreg_dev_pos = sum(deviant==1),
+              nreg_nondev = sum(deviant==0),
+              nreg_dev_neg = sum(deviant==-1))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev_neg+nreg_dev_pos+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev_pos=round(nreg_dev_pos*100/tot,2),
+                perc_dev_neg=round(nreg_dev_neg*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+dev      = c(1,1,1,1,1,1,-1,-1,-1,-1,-1,-1)
+nreg     = c(Z$nreg_dev_pos, Z$nreg_dev_neg)
+perc     = c(Z$perc_dev_pos, Z$perc_dev_neg)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+DF_Z <- DF_Z %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(vjust=cumsum(perc))
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          vjust = as.numeric(vjust),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+p2 <- ggplot(DF_Z)+ 
+  geom_bar(aes(x = timepoint, y=vjust, fill=diagnose),
+    stat="identity", alpha=0.3, position="dodge") +
+  geom_text(aes(x=timepoint, y=vjust, label=paste0(perc,"%"),
+                vjust=vjust, hjust = hjust), color="black",
+            position=position_dodge(0.9)) +
+  labs(col = " ",
+       title="308 regions (NO Match-it)",
+       x =" ",
+       y = " ",
+       text="infr") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+##############
+Z <- predictions_68M %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` > -1.96 & `Z.score` < 1.96, 0, `Z.score`)) %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96, -1, deviant)) %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` >  1.96, 1 , deviant)) %>%
+  dplyr::group_by(diagnose, timepoint) %>% 
+  dplyr::summarise(nreg_dev_pos = sum(deviant==1),
+              nreg_nondev = sum(deviant==0),
+              nreg_dev_neg = sum(deviant==-1))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev_neg+nreg_dev_pos+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev_pos=round(nreg_dev_pos*100/tot,2),
+                perc_dev_neg=round(nreg_dev_neg*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+dev      = c(1,1,1,1,1,1,-1,-1,-1,-1,-1,-1)
+nreg     = c(Z$nreg_dev_pos, Z$nreg_dev_neg)
+perc     = c(Z$perc_dev_pos, Z$perc_dev_neg)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+DF_Z <- DF_Z %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(vjust=cumsum(perc))
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          vjust = as.numeric(vjust),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+p3 <- ggplot(DF_Z)+ 
+  geom_bar(aes(x = timepoint, y=vjust, fill=diagnose),
+    stat="identity", alpha=0.3, position="dodge") +
+  geom_text(aes(x=timepoint, y=vjust, label=paste0(perc,"%"),
+                vjust=vjust, hjust = hjust), color="black",
+            position=position_dodge(0.9)) +
+  labs(col = " ",
+       title="68 regions (Match-it)",
+       x =" ",
+       y = " ",
+       text="infr") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+##############
+Z <- predictions_308M %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` > -1.96 & `Z.score` < 1.96, 0, `Z.score`)) %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96, -1, deviant)) %>%
+  dplyr::mutate(deviant = ifelse(`Z.score` >  1.96, 1 , deviant)) %>%
+  dplyr::group_by(diagnose, timepoint) %>% 
+  dplyr::summarise(nreg_dev_pos = sum(deviant==1),
+              nreg_nondev = sum(deviant==0),
+              nreg_dev_neg = sum(deviant==-1))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot=sum(nreg_dev_neg+nreg_dev_pos+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev_pos=round(nreg_dev_pos*100/tot,2),
+                perc_dev_neg=round(nreg_dev_neg*100/tot,2),
+                perc_nondev=round(nreg_nondev*100/tot,2))
+
+dev      = c(1,1,1,1,1,1,-1,-1,-1,-1,-1,-1)
+nreg     = c(Z$nreg_dev_pos, Z$nreg_dev_neg)
+perc     = c(Z$perc_dev_pos, Z$perc_dev_neg)
+timepoint= Z$timepoint
+diagnose = Z$diagnose
+DF_Z <- data.frame("diagnose"=diagnose, "timepoint"=timepoint, 
+                   "dev"=dev, "nreg"=nreg, 
+                   "perc"=perc)
+DF_Z <- DF_Z %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(vjust=cumsum(perc))
+
+DF_Z <- transform(DF_Z,
+          diagnose = as.factor(diagnose),
+          timepoint = as.factor(timepoint),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc),
+          vjust = as.numeric(vjust),
+          hjust = if_else(diagnose == "control", 1.3, -0.4))
+
+p4 <- ggplot(DF_Z)+ 
+  geom_bar(aes(x = timepoint, y=vjust, fill=diagnose),
+    stat="identity", alpha=0.3, position="dodge") +
+  geom_text(aes(x=timepoint, y=vjust, label=paste0(perc,"%"),
+                vjust=vjust, hjust = hjust),
+            position=position_dodge(0.9)) +
+  labs(col = " ",
+       title="308 regions (Match-it)",
+       x =" ",
+       y = " ",
+       text="infr") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_manual(labels = c("Controls","Patients"), values=c("midnightblue","green4"))
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+figure <- ggarrange(p1, p2, p3, p4, ncol = 2, nrow = 2,
+                    legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentage of deviation", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("timepoint", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Analysis of regions deviant (|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+figure <- ggarrange(p1, legend = "right", common.legend = TRUE)
+
+annotate_figure(figure,
+                left = text_grob("percentage of deviation", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("timepoint", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Infra and supra deviants(|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+```
+
+
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+Z <- predictions_68NoM %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>% 
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::summarise(nreg_dev    = sum(deviant==1),
+                   nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(diagnose, timepoint) %>%
+  dplyr::mutate(tot = sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev    = round(nreg_dev*100/tot,2),
+                perc_nondev = round(nreg_nondev*100/tot,2))
+```
+# GLOBAL RATIO
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+gZ <- predictions_68NoM %>% 
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>%
+  dplyr::group_by(diagnose, subID) %>%
+  dplyr::summarise(dev= sum(deviant==1),
+                   nondev = sum(deviant==0)) %>%
+  dplyr::mutate(gZ = round(dev/nondev, 3)) %>%
+  dplyr::select("diagnose", "subID", "gZ")
+
+gZ_infra <- predictions_68NoM %>% 
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96, 1, 0)) %>%
+  dplyr::group_by(diagnose, subID) %>%
+  dplyr::summarise(dev= sum(deviant==1),
+                   nondev = sum(deviant==0)) %>%
+  dplyr::mutate(gZ_infra = round(dev/nondev, 3)) %>%
+  dplyr::select("diagnose", "subID", "gZ_infra")
+
+gZ_supra <- predictions_68NoM %>% 
+  dplyr::mutate(deviant = ifelse(`Z.score` > 1.96, 1, 0)) %>%
+  dplyr::group_by(diagnose, subID) %>%
+  dplyr::summarise(dev= sum(deviant==1),
+                   nondev = sum(deviant==0)) %>%
+  dplyr::mutate(gZ_supra = round(dev/nondev, 3)) %>%
+  dplyr::select("diagnose", "subID", "gZ_supra")
+
+gZ_df <- merge(gZ_infra, gZ_supra) %>%
+            merge(gZ)
+rm(gZ_infra, gZ_supra, gZ)
+write.csv(gZ_df,  "/data_J/Results/Files/global_Zs.csv",   row.names = FALSE) #FSBRAIN
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+gZ <- predictions_68NoM %>% 
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96 | `Z.score` > 1.96, 1, 0)) %>%
+  dplyr::group_by(diagnose, subID, timepoint) %>%
+  dplyr::summarise(dev= sum(deviant==1),
+                   nondev = sum(deviant==0)) %>%
+  dplyr::mutate(gZ = round(dev/nondev, 3)) %>%
+  dplyr::select("diagnose", "subID", "gZ", "timepoint")
+
+gZ_infra <- predictions_68NoM %>% 
+  dplyr::mutate(deviant = ifelse(`Z.score` < -1.96, 1, 0)) %>%
+  dplyr::group_by(diagnose, subID, timepoint) %>%
+  dplyr::summarise(dev= sum(deviant==1),
+                   nondev = sum(deviant==0)) %>%
+  dplyr::mutate(gZ_infra = round(dev/nondev, 3)) %>%
+  dplyr::select("diagnose", "subID", "gZ_infra", "timepoint")
+
+gZ_supra <- predictions_68NoM %>% 
+  dplyr::mutate(deviant = ifelse(`Z.score` > 1.96, 1, 0)) %>%
+  dplyr::group_by(diagnose, subID, timepoint) %>%
+  dplyr::summarise(dev= sum(deviant==1),
+                   nondev = sum(deviant==0)) %>%
+  dplyr::mutate(gZ_supra = round(dev/nondev, 3)) %>%
+  dplyr::select("diagnose", "subID", "gZ_supra", "timepoint")
+
+gZ_df_tp <- merge(gZ_infra, gZ_supra) %>%
+            merge(gZ)
+rm(gZ_infra, gZ_supra, gZ)
+write.csv(gZ_df_tp,  "/data_J/Results/Files/global_Zs_tps.csv",   row.names = FALSE) #FSBRAIN
+```
