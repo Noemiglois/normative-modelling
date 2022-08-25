@@ -1,0 +1,484 @@
+---
+title: "Harmonization - BV - Males Only"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r, warning=F, message = F, echo = FALSE}
+#install.packages("easypackages")
+library("easypackages")
+
+list.of.packages <- c("tidyverse", "MatchIt", 
+                      "nlme", "JMbayes", "plyr",
+                      "BiocManager", "dplyr",
+                      "devtools", "longCombat", 
+                      "tinytex", "knitr", "Rmisc", 
+                      "effectsize", "tidyr",
+                      "Hmisc", "kableExtra")
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+  if(length(new.packages)>0) { install.packages(new.packages)}
+
+libraries(list.of.packages)
+rm(list.of.packages, new.packages)
+```
+
+```{r setup I, echo=F}
+knitr::opts_chunk$set(
+  include = TRUE,  
+  echo=TRUE, 
+  eval=TRUE, 
+  warning=TRUE, 
+  message = TRUE,
+  cache = F,
+  fig.width = 12,
+  fig.height = 8
+  )
+```
+
+```{r, warning=F, message = F, echo = FALSE}
+setwd("/data_J/Scripts")
+source("1_DataPreparation.R")
+```
+
+
+```{r include=FALSE}
+df_68 <- getData("68")
+df_68_males  <- subset(df_68, scode==1)
+
+df_308 <- getData("308")
+df_308_males <- subset(df_308, scode==1)
+
+measure <- "Vol"
+```
+
+
+```{r include=FALSE}
+# ### 68 REG PARC, NO MATCH IT
+df_68_Combat <- DataPreprocessing_males(df = df_68_males,
+                parc = "68",
+                measure = measure,
+                harmonization = T,
+                match = F)
+### 308 REG PARC, NO MATCH IT
+df_308_Combat <- DataPreprocessing_males(df = df_308_males,
+                 parc = "308",
+                 measure = measure,
+                 harmonization = T,
+                 match = F)
+
+### 68 REG PARC, MATCH IT
+df_68_Combat_Match <- DataPreprocessing_males(df = df_68_males,
+                      parc = "68",
+                      measure = measure,
+                      harmonization = T,
+                      match = T)
+
+### 308 REG PARC, MATCH IT
+df_308_Combat_Match <- DataPreprocessing_males(df = df_308_males,
+                       parc = "308",
+                       measure = measure,
+                       harmonization = T,
+                       match = T)
+```
+
+
+\newpage
+
+
+```{r include=FALSE}
+signif_df <- function(x, digits) {
+    numeric_columns <- sapply(x, mode) == 'numeric'
+    x[numeric_columns] <-  round(x[numeric_columns], digits)
+    return(x)}
+```
+
+# Additive
+
+# Additive batch effects BEFORE longitudinal ComBat (BV)
+## 68 regions
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+df <- df_68_males
+measure <- measure
+formula = 'age + dcode*timepoint'
+ranef = '(1|subID)'
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+
+a_68 <- addTest("ID", "acode", features, formula, ranef, df, verbose = F)
+a_68[2] <- as.numeric(unlist(a_68[colnames(a_68)[2]]))
+a_68[3] <- as.numeric(unlist(a_68[colnames(a_68)[3]]))
+a_68[4] <- as.numeric(unlist(a_68[colnames(a_68)[4]]))
+```
+
+\tiny
+
+```{r echo=FALSE}
+a_68 <- signif_df(a_68, 3)
+kable(a_68)
+```
+
+\normalsize
+
+```{r echo=FALSE}
+a_68_sig <- a_68 %>%
+  dplyr::mutate(significant = ifelse(`KR p-value` < 0.05, 1, 0)) %>%
+  dplyr::summarise(sig= sum(significant==1), nonsig = sum(significant==0))
+cat("\n Significant:",a_68_sig$sig, "\n Non-significant:", a_68_sig$nonsig)
+```
+
+\newpage
+
+
+# Additive batch effects BEFORE longitudinal ComBat (BV)
+## 308 regions
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+df <- df_308_males
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+a_308 <- addTest("ID", "acode", features, formula, ranef, df, verbose = F)
+a_308[2] <- as.numeric(unlist(a_308[colnames(a_308)[2]]))
+a_308[3] <- as.numeric(unlist(a_308[colnames(a_308)[3]]))
+a_308[4] <- as.numeric(unlist(a_308[colnames(a_308)[4]]))
+```
+
+\tiny
+
+```{r echo=FALSE}
+a_308 <- signif_df(a_308, 3)
+kable(a_308)
+```
+
+\normalsize
+
+```{r echo=FALSE}
+a_308_sig <- a_308 %>%
+  dplyr::mutate(significant = ifelse(`KR p-value` < 0.05, 1, 0)) %>%
+  dplyr::summarise(sig= sum(significant==1),
+                   nonsig = sum(significant==0))
+cat("\n Significant:",a_308_sig$sig, "\n Non-significant:", a_308_sig$nonsig)
+```
+
+\newpage
+
+# Additive batch effects BEFORE longitudinal ComBat (boxplot) (BV)
+## 68 regions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- df_68_males
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+feature <- which(features==a_68[1,"Feature"], arr.ind = FALSE, useNames = TRUE)
+
+batchBoxplot("ID", "acode", feature, formula, ranef, df,
+  adjustBatch = FALSE, orderby = "mean", plotMeans = TRUE,
+  colors = "grey", xlabel = "batch", ylabel = "residuals",
+  title = "", verbose = F)
+```
+
+# Additive batch effects BEFORE longitudinal ComBat (boxplot) (BV)
+## 308 regions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- df_308_males
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+feature <- which(features==a_308[1,"Feature"], arr.ind = FALSE, useNames = TRUE)
+
+batchBoxplot("ID", "acode", feature, formula, ranef, df,
+  adjustBatch = FALSE, orderby = "mean", plotMeans = TRUE,
+  colors = "grey", xlabel = "batch", ylabel = "residuals",
+  title = "", verbose = F)
+```
+
+\newpage
+
+# Multiplicative
+
+# Multiplicative batch effects BEFORE longitudinal ComBat (BV)
+## 68 regions
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+df <- df_68_males
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+m_68 <- multTest("ID", "acode", features, formula, ranef, df, verbose = F)
+m_68[2] <- as.numeric(unlist(m_68[colnames(m_68)[2]]))
+m_68[4] <- as.numeric(unlist(m_68[colnames(m_68)[4]]))
+m_68[3] <- NULL
+colnames(m_68) <- c("Feature", "$\\chi ^2$", "p-value")
+```
+
+\tiny
+
+```{r echo=FALSE}
+m_68 <- signif_df(m_68, 3)
+kable(m_68)
+```
+
+\normalsize
+
+```{r echo=FALSE}
+m_68_sig <- m_68 %>%
+  dplyr::mutate(significant = ifelse(`p-value` < 0.05, 1, 0)) %>%
+  dplyr::summarise(sig= sum(significant==1),
+                   nonsig = sum(significant==0))
+cat("\n Significant:",m_68_sig$sig, "\n Non-significant:", m_68_sig$nonsig)
+```
+
+\newpage
+
+
+# Multiplicative batch effects BEFORE longitudinal ComBat (BV)
+## 308 regions
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+df <- df_308_males
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+m_308 <- multTest("ID", "acode", features, formula, ranef, df, verbose = F)
+m_308[2] <- as.numeric(unlist(m_308[colnames(m_308)[2]]))
+m_308[4] <- as.numeric(unlist(m_308[colnames(m_308)[4]]))
+m_308[3] <- NULL
+colnames(m_308) <- c("Feature", "$\\chi ^2$", "p-value")
+```
+
+\tiny
+
+```{r echo=FALSE}
+m_308 <- signif_df(m_308, 3)
+kable(m_308)
+```
+
+\normalsize
+
+```{r echo=FALSE}
+m_308_sig <- m_308 %>%
+  dplyr::mutate(significant = ifelse(`p-value` < 0.05, 1, 0)) %>%
+  dplyr::summarise(sig= sum(significant==1),
+                   nonsig = sum(significant==0))
+cat("\n Significant:",m_308_sig$sig, "\n Non-significant:", m_308_sig$nonsig)
+```
+\newpage
+
+
+# Multiplicative batch effects BEFORE longitudinal ComBat (boxplot) (BV)
+## 68 regions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- df_68_males
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+feature <- which(features==m_68[1,"Feature"], arr.ind = FALSE, useNames = TRUE)
+
+batchBoxplot("ID", "acode", feature, formula, ranef, df,
+  adjustBatch = T, orderby = "var", plotMeans = TRUE,
+  colors = "grey", xlabel = "batch", ylabel = "residuals",
+  title = "", verbose = F)
+```
+
+# Multiplicative batch effects BEFORE longitudinal ComBat (boxplot) (BV)
+## 308 regions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- df_308_males
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+feature <- which(features==m_308[1,"Feature"], arr.ind = FALSE, useNames = TRUE)
+
+batchBoxplot("ID", "acode", feature, formula, ranef, df,
+  adjustBatch = T, orderby = "var", plotMeans = TRUE,
+  colors = "grey", xlabel = "batch", ylabel = "residuals",
+  title = "", verbose = F)
+```
+
+\newpage
+
+
+# aqui abajo
+# Additive batch effects AFTER longitudinal ComBat (BV)
+## 68 regions
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+df <- df_68_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+
+a_68_after <- addTest("ID", "acode", features, formula, ranef, df, verbose = F)
+a_68_after[2] <- as.numeric(unlist(a_68_after[colnames(a_68_after)[2]]))
+a_68_after[3] <- as.numeric(unlist(a_68_after[colnames(a_68_after)[3]]))
+a_68_after[4] <- as.numeric(unlist(a_68_after[colnames(a_68_after)[4]]))
+```
+
+\tiny
+
+```{r echo=FALSE}
+a_68_after <- signif_df(a_68_after, 3)
+kable(a_68_after)
+```
+
+\normalsize
+
+```{r echo=FALSE}
+a_68_after_sig <- a_68_after %>%
+  dplyr::mutate(significant = ifelse(`KR p-value` < 0.05, 1, 0)) %>%
+  dplyr::summarise(sig= sum(significant==1),
+                   nonsig = sum(significant==0))
+cat("\n Significant:",a_68_after_sig$sig, "\n Non-significant:", a_68_after_sig$nonsig)
+```
+
+\newpage
+
+
+# Additive batch effects AFTER longitudinal ComBat (BV)
+## 308 regions
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+df <- df_308_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+a_308_after <- addTest("ID", "acode", features, formula, ranef, df, verbose = F)
+a_308_after[2] <- as.numeric(unlist(a_308_after[colnames(a_308_after)[2]]))
+a_308_after[3] <- as.numeric(unlist(a_308_after[colnames(a_308_after)[3]]))
+a_308_after[4] <- as.numeric(unlist(a_308_after[colnames(a_308_after)[4]]))
+```
+
+\tiny
+
+```{r echo=FALSE}
+a_308_after <- signif_df(a_308_after, 3)
+kable(a_308_after)
+```
+
+\normalsize
+
+```{r echo=FALSE}
+a_308_after_sig <- a_308_after %>%
+  dplyr::mutate(significant = ifelse(`KR p-value` < 0.05, 1, 0)) %>%
+  dplyr::summarise(sig= sum(significant==1),
+                   nonsig = sum(significant==0))
+cat("\n Significant:",a_308_after_sig$sig, "\n Non-significant:", a_308_after_sig$nonsig)
+```
+
+\newpage
+
+# Additive batch effects AFTER longitudinal ComBat (boxplot) (BV)
+## 68 regions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- df_68_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+feature <- which(features==a_68[1,"Feature"], arr.ind = FALSE, useNames = TRUE)
+
+batchBoxplot("ID", "acode", feature, formula, ranef, df,
+  adjustBatch = FALSE, orderby = "mean", plotMeans = TRUE,
+  colors = "grey", xlabel = "batch", ylabel = "residuals",
+  title = "", verbose = F)
+```
+
+# Additive batch effects AFTER longitudinal ComBat (boxplot) (BV)
+## 308 regions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- df_308_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+feature <- which(features==a_308[1,"Feature"], arr.ind = FALSE, useNames = TRUE)
+
+batchBoxplot("ID", "acode", feature, formula, ranef, df,
+  adjustBatch = FALSE, orderby = "mean", plotMeans = TRUE,
+  colors = "grey", xlabel = "batch", ylabel = "residuals",
+  title = "", verbose = F)
+```
+
+\newpage
+
+# Multiplicative batch effects AFTER longitudinal ComBat (BV)
+## 68 regions
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+df <- df_68_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+m_68_after <- multTest("ID", "acode", features, formula, ranef, df, verbose = F)
+m_68_after[2] <- as.numeric(unlist(m_68_after[colnames(m_68_after)[2]]))
+m_68_after[4] <- as.numeric(unlist(m_68_after[colnames(m_68_after)[4]]))
+m_68_after[3] <- NULL
+colnames(m_68_after) <- c("Feature", "$\\chi ^2$", "p-value")
+```
+
+\tiny
+
+```{r echo=FALSE}
+m_68_after <- signif_df(m_68_after, 3)
+kable(m_68_after)
+```
+
+\normalsize
+
+```{r echo=FALSE}
+m_68_after_sig <- m_68_after %>%
+  dplyr::mutate(significant = ifelse(`p-value` < 0.05, 1, 0)) %>%
+  dplyr::summarise(sig= sum(significant==1),
+                   nonsig = sum(significant==0))
+cat("\n Significant:",m_68_after_sig$sig, "\n Non-significant:", m_68_after_sig$nonsig)
+```
+
+\newpage
+
+
+# Multiplicative batch effects AFTER longitudinal ComBat (BV)
+## 308 regions
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+df <- df_308_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+m_308_after <- multTest("ID", "acode", features, formula, ranef, df, verbose = F)
+m_308_after[2] <- as.numeric(unlist(m_308_after[colnames(m_308_after)[2]]))
+m_308_after[4] <- as.numeric(unlist(m_308_after[colnames(m_308_after)[4]]))
+m_308_after[3] <- NULL
+colnames(m_308_after) <- c("Feature", "$\\chi ^2$", "p-value")
+```
+
+\tiny
+
+```{r echo=FALSE}
+m_308_after <- signif_df(m_308_after, 3)
+kable(m_308_after)
+```
+
+\normalsize
+
+```{r echo=FALSE}
+m_308_after_sig <- m_308_after %>%
+  dplyr::mutate(significant = ifelse(`p-value` < 0.05, 1, 0)) %>%
+  dplyr::summarise(sig= sum(significant==1),
+                   nonsig = sum(significant==0))
+cat("\n Significant:",m_308_after_sig$sig, "\n Non-significant:", m_308_after_sig$nonsig)
+```
+\newpage
+
+
+# Multiplicative batch effects AFTER longitudinal ComBat (boxplot) (BV)
+## 68 regions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- df_68_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+feature <- which(features==m_68[1,"Feature"], arr.ind = FALSE, useNames = TRUE)
+
+batchBoxplot("ID", "acode", feature, formula, ranef, df,
+  adjustBatch = T, orderby = "var", plotMeans = TRUE,
+  colors = "grey", xlabel = "batch", ylabel = "residuals",
+  title = "", verbose = F)
+```
+
+# Multiplicative batch effects AFTER longitudinal ComBat (boxplot) (BV)
+## 308 regions
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+df <- df_308_Combat
+features  <- colnames(df%>%dplyr::select(ends_with(measure)))
+feature <- which(features==m_308[1,"Feature"], arr.ind = FALSE, useNames = TRUE)
+
+batchBoxplot("ID", "acode", feature, formula, ranef, df,
+  adjustBatch = T, orderby = "var", plotMeans = TRUE,
+  colors = "grey", xlabel = "batch", ylabel = "residuals",
+  title = "", verbose = F)
+```
+
+\newpage
