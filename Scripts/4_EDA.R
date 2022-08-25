@@ -12,13 +12,15 @@ EDA_match_ages <- function(df, match){
   # setdiff(age_pat,age_hc)  # Ages that are in patients but not in controls
   ages_no_match <- sort(c(setdiff(age_hc, age_pat),setdiff(age_pat,age_hc))) # Ages that doesn't match
   return(cat(match, "dataset: \n Ages that doesn't match in patients vs controls: ",
-             ages_no_match, "\n Min age: ", min(df$age), "\n Max age: ", max(df$age)))
+             ages_no_match, 
+             "\n Min age: ", min(df$age),
+             "\n Max age: ", max(df$age), 
+             "\n Mean age: ", round(mean(df$age),2)))
 }
 
 
 variancePartition_lm <- function(df, measure, lab, par){
   ## PREPARE DATA ##
-  
   reg_names <- colnames(df%>%dplyr::select(ends_with(measure)))
   
   # Rename predictors
@@ -84,6 +86,7 @@ variancePartition_lme <- function(df, measure, lab, par){
   
   # Rename predictors
   names(df)[names(df) == "age"]   <- "Age"
+  names(df)[names(df) == "acode"] <- "Acode"
   names(df)[names(df) == "scode"] <- "Sex"
   names(df)[names(df) == "euler"] <- "Euler_number"
   names(df)[names(df) == "dcode"] <- "Diagnosis"
@@ -93,6 +96,7 @@ variancePartition_lme <- function(df, measure, lab, par){
   df$Sex        <- as.factor(df$Sex)
   df$Individual <- as.factor(df$Individual)
   df$Diagnosis  <- as.factor(df$Diagnosis)
+  df$Acode      <- as.factor(df$Acode)
   
   ## VIOLIN PLOTS ##
   # Select regions, transpose
@@ -101,6 +105,7 @@ variancePartition_lme <- function(df, measure, lab, par){
   # Create vectors for each predictor
   Age <- df$Age
   Sex <- df$Sex
+  Acode <- df$acode
   Diagnosis    <- df$Diagnosis
   Euler_number <- df$Euler_number
   Individual   <- df$Individual
@@ -108,10 +113,10 @@ variancePartition_lme <- function(df, measure, lab, par){
   # Create formula
   # form <- ~ Age+Sex+Diagnosis+Euler_number # General/classic linear model
   # REGRESSION: FIXED: ~ scode + age + euler, RANDOM = ~1 + age|subID
-  form <- ~ Age + (1|Sex) + (1|Diagnosis) + Euler_number + (1|Individual) # Linear mixed effects model
+  form <- ~ Age + (1|Sex) + (1|Diagnosis) + Euler_number + (1|Individual) + (1|Acode) # Linear mixed effects model
   
   # Create dataframe with predictors
-  info <- df[,c("Age", "Sex", "Diagnosis", "Euler_number", "Individual")]
+  info <- df[,c("Age", "Sex", "Diagnosis", "Euler_number", "Individual", "Acode")]
   
   # Run variance partition
   varPart <- fitExtractVarPartModel(df_base_ima, form, info, BPPARAM=SnowParam(25))
@@ -122,7 +127,8 @@ variancePartition_lme <- function(df, measure, lab, par){
   # Plot sorted columns as violins, setting colors
   theme_set(theme_gray(base_size = 40))
   violins <- plotVarPart(vp, col = c("#440154FF", "#5DC863FF", "#3B528BFF",
-                                     "#21908CFF", "#440154FF", "lightgrey"))
+                                     "#21908CFF", "#440154FF", "lightgrey", 
+                                     "orange"))
 
   # Save as png
   png(file=paste0("/data_J/Results/Plots/", par, "/violin_", lab, ".png"),
@@ -132,63 +138,3 @@ variancePartition_lme <- function(df, measure, lab, par){
   
   dev.off()
 }
-
-
-pdf_plot <- function(Z, lab, par){
-  # Histogram overlaid with kernel density curve
-  for (g in unique(Z$group)){
-    Zg <- subset(Z, group==g)
-    pdf <- ggplot(Zg, aes(x=z)) +
-      geom_histogram(aes(y=..density..),        # Histogram with density
-                     binwidth=.3, colour="black", fill="white") +
-      geom_density(alpha=.2, fill="#FF6666")  + # Transparent density plot
-      geom_vline(aes(xintercept=mean(z, na.rm=T)),   # Ignore NA values for mean
-                 color="red", linetype="dashed", size=0.5) +
-      labs(title = paste0(g),
-           x = "z-score",
-           y = "density") +
-      theme(plot.title = element_text(size=22)) +
-      xlim(-5, 5)
-    
-    
-    # Save as png
-    png(file=paste0("/data_J/Results/Plots/",par,"/pdf_",g,"_",lab,".png"),
-        width=10, height=5, units="in", res=300)
-    print(pdf)
-    dev.off()
-  }
-}
-
-mean_Z_across_regions_plot <- function(Z, par, lab){
-  for (g in unique(Z$group)){
-    Zg <- subset(Z, group==g)
-    z_mean_reg_match <- Zg %>%
-      group_by(region) %>%
-      dplyr::summarise(media = mean(z))
-    x <- 1:length(z_mean_reg_match$media)
-    means_plot <- plot(x, z_mean_reg_match$media, type = "l", lwd=1, 
-                       xlab="region", ylab="mean z-score", 
-                       main="Mean z-score per region (NO MATCH)")
-    
-    # Save as png
-    png(file=paste0("/data_J/Results/Plots/",par,"/mean_Z_",g,"_",lab,".png"), 
-        width=5, height=10, units="in", res=300)
-    print(means_plot)
-    dev.off()
-  }
-}
-
-
-Z_across_regions_plot <- function(Z, par, lab){
-  fig <- ggplot(Z, aes(y=z, x=group)) +
-    geom_boxplot()
-  # Save as png
-  png(file=paste0("/data_J/Results/Plots/", par,"/boxplot_Z_", lab,".png"), width=10,
-      height=5, units="in", res=300)
-  print(fig)
-  dev.off()
-}
-
-
-
-
