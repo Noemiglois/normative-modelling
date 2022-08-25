@@ -1,0 +1,1885 @@
+---
+title: "Normative modeling in Schizophrenia - Regression Models (lme)"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup I, include=F}
+knitr::opts_chunk$set(
+  include = TRUE,  
+  echo=TRUE, 
+  eval=TRUE, 
+  warning=TRUE, 
+  message = TRUE,
+  cache = TRUE,
+  fig.width = 12,
+  fig.height = 8
+  )
+```
+
+### Packages and libraries
+
+We get a list of all the needed packages, then we install the ones that are not yet and load them all. In the end, we get the number of cores available in PC, which we will be using later on to parallelize.
+
+```{r, warning=F, message = F}
+
+library("easypackages")
+
+list.of.packages <- c("viridis", "tidyverse", "MatchIt", "grid", "png", 
+                      "gridExtra", "parallel", "nlme", "JMbayes", "plyr",
+                      "BiocManager", "Biostrings", "lme4", "ggplot2", "dplyr",
+                      "Hmisc", "devtools", "longCombat", "neuroCombat", 
+                      "tinytex", "knitr", "ggExtra", "variancePartition",
+                      "Rmisc", "doParallel", "hrbrthemes", "cowplot", 
+                      "BiocParallel", "effectsize", "ggpubr")
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+  if(length(new.packages)>0) { install.packages(new.packages)}
+
+libraries(list.of.packages)
+ncores <- detectCores()
+rm(list.of.packages, new.packages)
+```
+
+
+```{r, eval = FALSE, include = FALSE}
+install_github("jcbeer/longCombat")
+install_github("jfortin1/neuroCombatData")
+install_github("jfortin1/neuroCombat_Rpackage")
+BiocManager::install("Biostrings")
+BiocManager::install("variancePartition")
+# install_version("dplyr", version = "1.0.5", repos = "http://cran.us.r-project.org")
+tinytex::install_tinytex()
+```
+
+### Set the working directory and load functions
+
+```{r, warning=F, message = F}
+setwd("/data_J/Scripts")
+source("1_DataPreparation.R")
+source("2_RegressionModel.R")
+source("3_Statistics.R")
+source("4_EDA.R")
+```
+
+```{r, warning = F, message = F}
+df_lC_NO_matched_68 <- DataPreparation(parc = "parc68",
+                                       harmonization = "lC",
+                                       match = F)
+
+df_lC_matched_68 <- DataPreparation(parc = "parc68",
+                                    harmonization = "lC",
+                                    match = T)
+
+df_lC_NO_matched_308 <- DataPreparation(parc = "parc308",
+                                        harmonization = "none",
+                                        match = F)
+
+df_lC_matched_308 <- DataPreparation(parc = "parc308",
+                                     harmonization = "none",
+                                     match = T)
+```
+
+# Linear Mixed Effects Model Regresion
+
+Calling the *run_NormativeModel* function with different datasets. We build the regression with the data from healthy controls and make individual predictions over controls as well as over patients. The formula used is region ~ scode + age + euler as the fixed effects and ~ 1 + age|subID as the random ones. This function will return the z-scores (one for each region for each timepoint of each subject).
+
+## NO Match-it dataframe
+
+```{r}
+Zs_NOmatch_68 <- run_NormativeModel(df_lC_NO_matched_68,
+                                 measure = "CT_freesurfer",
+                                 parc = "parc68",
+                                 match = "NOmatch",
+                                 harmonization = "lC")
+
+Zs_NOmatch_308 <- run_NormativeModel(df_lC_NO_matched_308,
+                                 measure = "thickness",
+                                 parc = "parc308",
+                                 match = "NOmatch",
+                                 harmonization = "lC")
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pdf_plot(Z = Zs_NOmatch_68,
+         lab = "lC_NOmatched_parc68",
+         par = "parc68")
+
+pdf_plot(Z = Zs_NOmatch_308,
+         lab = "lC_NOmatched_parc308",
+         par = "parc308")
+```
+
+```{r, echo=FALSE}
+# unique(Zs_NOmatch_68$group)
+# Zs_NOmatch_68[Zs_NOmatch_68=="train"] = "train_control"
+# Zs_NOmatch_68[Zs_NOmatch_68=="test control"] = "test_control"
+# Zs_NOmatch_68[Zs_NOmatch_68=="test patient"] = "test_patient"
+
+train_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/pdf_train_control_lC_NOmatched_parc68.png")), interpolate = FALSE)
+test_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/pdf_test_control_lC_NOmatched_parc68.png")), interpolate = FALSE)
+pat_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/pdf_test_patient_lC_NOmatched_parc68.png")), interpolate = FALSE)
+
+train_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/pdf_train_control_lC_NOmatched_parc308.png")), interpolate = FALSE)
+test_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/pdf_test_control_lC_NOmatched_parc308.png")), interpolate = FALSE)
+pat_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/pdf_test_patient_lC_NOmatched_parc308.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(train_68, test_68, pat_68, top="68 regions parcellation"), arrangeGrob(train_308, test_308, pat_308, top="308 regions parcellation"), ncol=3, top = grid::textGrob("z-score distribution", gp=grid::gpar(fontsize=22,font=3)))
+```
+
+
+
+```{r, results = 'hide'}
+Z_across_regions_plot(Z = Zs_NOmatch_308,
+                           par="parc308",
+                           lab="lC_NOmatched_parc308")
+Z_across_regions_plot(Z = Zs_NOmatch_68,
+                           par="parc68",
+                           lab="lC_NOmatched_parc68")
+
+```
+
+```{r, echo=FALSE}
+fig_68  <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/boxplot_Z_lC_NOmatched_parc68.png")), interpolate = FALSE)
+fig_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/boxplot_Z_lC_NOmatched_parc308.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(fig_68, top="68 regions parcellation"), arrangeGrob(fig_308, top="308 regions parcellation"), ncol=2, top = grid::textGrob("z-score distribution", gp=grid::gpar(fontsize=22,font=3)))
+```
+
+## Match-it dataframe
+
+```{r}
+Zs_match_68 <- run_NormativeModel(df_lC_matched_68,
+                                 measure = "CT_freesurfer",
+                                 parc = "parc68",
+                                 match = "match",
+                                 harmonization = "lC")
+
+Zs_match_308 <- run_NormativeModel(df_lC_matched_308,
+                                 measure = "thickness",
+                                 parc = "parc308",
+                                 match = "match",
+                                 harmonization = "lC")
+```
+
+```{r echo=FALSE}
+sigmas1 <- unique(Zs_NOmatch_68$sigma)
+# plot(sigmas, type = "b", pch = 18, 
+#      col = "navyblue", ylab = "model sigma", xlab = "region")
+sigmas2 <- unique(Zs_NOmatch_308$sigma)
+# plot(sigmas, type = "b", pch = 18, 
+#      col = "navyblue", ylab = "model sigma", xlab = "region")
+sigmas3 <- unique(Zs_match_68$sigma)
+# plot(sigmas, type = "b", pch = 18, 
+#      col = "navyblue", ylab = "model sigma", xlab = "region")
+sigmas4 <- unique(Zs_match_308$sigma)
+# plot(sigmas, type = "b", pch = 18, 
+#      col = "navyblue", ylab = "model sigma", xlab = "region")
+
+data1 <- data.frame(
+  name=c( rep("NO-Match-it 68 regions", length(sigmas1)), 
+          rep("NO-Match-it 308 regions",length(sigmas2)), 
+          rep("Match-it 68 regions",    length(sigmas3)), 
+          rep("Match-it 308 regions",   length(sigmas4))),
+  value=c(sigmas1, sigmas2,
+          sigmas3, sigmas4))
+
+data1$name <- factor(data1$name, levels=c("NO-Match-it 68 regions", "NO-Match-it 308 regions",
+                                          "Match-it 68 regions", "Match-it 308 regions"))
+
+plot1 <- data1 %>%
+  ggplot(aes(x=name, y=value, group= name)) +
+  geom_boxplot() +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        legend.position="none",
+        plot.title = element_text(size=15)) +
+  ggtitle("Boxplot of models sigma") +
+  xlab("dataset") + 
+  ylab("sigma")
+plot1
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pdf_plot(Z = Zs_match_308,
+         lab = "lC_matched_parc308",
+         par = "parc308")
+
+pdf_plot(Z = Zs_match_68,
+         lab = "lC_matched_parc68",
+         par = "parc68")
+```
+
+```{r, echo=FALSE}
+train_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/pdf_train_control_lC_matched_parc68.png")), interpolate = FALSE)
+test_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/pdf_test_control_lC_matched_parc68.png")), interpolate = FALSE)
+pat_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/pdf_test_patient_lC_matched_parc68.png")), interpolate = FALSE)
+
+train_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/pdf_train_control_lC_matched_parc308.png")), interpolate = FALSE)
+test_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/pdf_test_control_lC_matched_parc308.png")), interpolate = FALSE)
+pat_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/pdf_test_patient_lC_matched_parc308.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(train_68, test_68, pat_68, top="68 regions parcellation"), arrangeGrob(train_308, test_308, pat_308, top="308 regions parcellation"), ncol=3, top = grid::textGrob("z-score distribution", gp=grid::gpar(fontsize=22,font=3)))
+```
+
+
+```{r message=FALSE, warning=FALSE, results = 'hide'}
+Z_across_regions_plot(Z = Zs_match_308,
+                           par="parc308",
+                           lab="lC_matched_parc308")
+Z_across_regions_plot(Z = Zs_match_68,
+                           par="parc68",
+                           lab="lC_matched_parc68")
+```
+
+```{r, echo=FALSE}
+fig_68  <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/boxplot_Z_lC_matched_parc68.png")), interpolate = FALSE)
+fig_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/boxplot_Z_lC_matched_parc308.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(fig_68, top="68 regions parcellation"), arrangeGrob(fig_308, top="308 regions parcellation"), ncol=2, top = grid::textGrob("z-score distribution", gp=grid::gpar(fontsize=22,font=3)))
+```
+
+
+```{r include=FALSE}
+df <- Zs_NOmatch_68
+a<-mean(df[df[,"group"] == "train_control",]$z)
+b<-mean(df[df[,"group"] == "test_control",]$z)
+c<-mean(df[df[,"group"] == "test_patient",]$z)
+mean_Z <- data.frame(dataset="NO match-it 68 regions", predict=" train data (hc)",mean_z=a)
+mean_Z <- rbind(mean_Z, c(dataset="NO match-it 68 regions", predict=" test data (hc)", mean_z=b))
+mean_Z <- rbind(mean_Z, c(dataset="NO match-it 68 regions", predict=" test data (pat)", mean_z=c))
+
+df <- Zs_match_68
+a<-mean(df[df[,"group"] == "train_control",]$z)
+b<-mean(df[df[,"group"] == "test_control",]$z)
+c<-mean(df[df[,"group"] == "test_patient",]$z)
+mean_Z <- rbind(mean_Z, c(dataset="Match-it 68 regions", predict=" train data (hc)", mean_z=a))
+mean_Z <- rbind(mean_Z, c(dataset="Match-it 68 regions", predict=" test data (hc)",  mean_z=b))
+mean_Z <- rbind(mean_Z, c(dataset="Match-it 68 regions", predict=" test data (pat)", mean_z=c))
+
+
+df <- Zs_NOmatch_308
+a<-mean(df[df[,"group"] == "train_control",]$z)
+b<-mean(df[df[,"group"] == "test_control",]$z)
+c<-mean(df[df[,"group"] == "test_patient",]$z)
+mean_Z <- rbind(mean_Z, c(dataset="NO match-it 308 regions", predict=" train data (hc)", mean_z=a))
+mean_Z <- rbind(mean_Z, c(dataset="NO match-it 308 regions", predict=" test data (hc)",  mean_z=b))
+mean_Z <- rbind(mean_Z, c(dataset="NO match-it 308 regions", predict=" test data (pat)", mean_z=c))
+
+df <- Zs_match_308
+a<-mean(df[df[,"group"] == "train_control",]$z)
+b<-mean(df[df[,"group"] == "test_control",]$z)
+c<-mean(df[df[,"group"] == "test_patient",]$z)
+mean_Z <- rbind(mean_Z, c(dataset="Match-it 308 regions", predict=" train data (hc)", mean_z=a))
+mean_Z <- rbind(mean_Z, c(dataset="Match-it 308 regions", predict=" test data (hc)",  mean_z=b))
+mean_Z <- rbind(mean_Z, c(dataset="Match-it 308 regions", predict=" test data (pat)", mean_z=c))
+
+mean_Z <- transform(mean_Z,
+          mean_z = as.numeric(mean_z))
+mean_Z[,3] <- signif(mean_Z[,3], digits=3)
+mean_Z
+```
+
+
+
+```{r echo=FALSE, fig.width = 9, fig.height = 2}
+# df_lC_matched_308
+
+#Turn your 'treatment' column into a character vector
+mean_Z$dataset <- as.character(mean_Z$dataset)
+#Then turn it back into a factor with the levels in the correct order
+mean_Z$dataset <- factor(mean_Z$dataset, levels=unique(mean_Z$dataset))
+
+
+ggplot(mean_Z, aes_string(x="dataset", y="mean_z", group= "predict", color="predict")) +
+  geom_line() +
+  geom_point(size=2) +
+  labs(color = "Subset to predict\n") +
+  labs(title="Mean Z of all regions depending on the data used to predict",
+       x ="Data used to train and predict",
+       y = "Mean z-score value") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_discrete(name = "Diagnose", labels = c("Control", "Patient")) +
+  scale_colour_manual(labels = c("Test (controls)", "Test (patients)", "Train (controls)"), 
+                      values = c("green4", "midnightblue", "orange"))
+```
+
+
+## Cohen's d
+
+Cohen’s d, also known as the standardized mean difference (SMD), is a type of **effect size** between two means. An effect size is a quantitative measure of the magnitude for the difference between two means. Since the values are standardized, it is possible to compare values between different variables. Cohen's d is the number of standard deviations between two groups (for more info see [doc](https://toptipbio.com/cohens-d/)).
+
+## NO match-it dataframe
+
+```{r}
+ds_NOmatch_68 <- run_NormativeModel_Cohensd(df_lC_NO_matched_68,
+                                 measure = "CT_freesurfer",
+                                 parc = "parc68",
+                                 match = "NOmatch",
+                                 harmonization = "lC")
+```
+
+```{r echo=FALSE, comment=NA}
+table(ds_NOmatch_68[,"interpret"])
+
+idx <- which(ds_NOmatch_68[,"interpret"]=="small")
+measure <- "CT_freesurfer"
+reg_names  <- colnames(df_lC_NO_matched_68%>%select(ends_with(measure)))
+cat("Region", reg_names[idx], "has an small effect size.")
+```
+
+```{r}
+ds_NOmatch_308 <- run_NormativeModel_Cohensd(df_lC_NO_matched_308,
+                                 measure = "thickness",
+                                 parc = "parc308",
+                                 match = "NOmatch",
+                                 harmonization = "lC")
+```
+                                 
+```{r echo=FALSE, comment=NA}
+table(ds_NOmatch_308[,"interpret"])
+```
+
+## Match-it dataframe
+
+
+```{r}
+ds_match_68 <- run_NormativeModel_Cohensd(df_lC_matched_68,
+                                 measure = "CT_freesurfer",
+                                 parc = "parc68",
+                                 match = "match",
+                                 harmonization = "lC")
+```
+
+```{r echo=FALSE, comment=NA}
+table(ds_match_68[,"interpret"])
+
+idx <- which(ds_match_68[,"interpret"]=="small")
+measure <- "CT_freesurfer"
+reg_names  <- colnames(df_lC_matched_68%>%select(ends_with(measure)))
+cat("Region", reg_names[idx], "has an small effect size.")
+```
+
+```{r}
+ds_match_308 <- run_NormativeModel_Cohensd(df_lC_matched_308,
+                                 measure = "thickness",
+                                 parc = "parc308",
+                                 match = "match",
+                                 harmonization = "lC")
+```
+
+```{r echo=FALSE, comment=NA}
+table(ds_match_308[,"interpret"])
+
+idx <- which(ds_match_308[,"interpret"]=="small")
+measure <- "thickness"
+reg_names  <- colnames(df_lC_matched_308%>%select(ends_with(measure)))
+cat("Region", reg_names[idx], "has an small effect size.")
+```
+
+## Match-it dataframe (Age*Diagnosis) BEFORE EXCLUDING DEVIANTS
+
+Calling the *run_AgeDiagnosisModel* function. In this case, we build the regression with the data from healthy controls as well as patients. Next we exclude the deviants from the model and run again the function
+
+This function will return the p-values (one for each region of each subject)
+
+```{r, message=F}
+p_val_68 <- run_AgeDiagnosisModel(df_lC_matched_68,
+                               measure = "CT_freesurfer",
+                               Z = NULL,
+                               exclude_deviants = F)
+
+p_val_NO68 <- run_AgeDiagnosisModel(df_lC_NO_matched_68,
+                               measure = "CT_freesurfer",
+                               Z = NULL,
+                               exclude_deviants = F)
+
+p_val_308 <- run_AgeDiagnosisModel(df_lC_matched_308,
+                               measure = "thickness",
+                               Z = NULL,
+                               exclude_deviants = F)
+
+p_val_NO308 <- run_AgeDiagnosisModel(df_lC_NO_matched_308,
+                               measure = "thickness",
+                               Z = NULL,
+                               exclude_deviants = F)
+
+p_val_FDR_68    <- Apply_FDR_Correction(p_val_68)
+p_val_FDR_NO68  <- Apply_FDR_Correction(p_val_NO68)
+p_val_FDR_308   <- Apply_FDR_Correction(p_val_308)
+p_val_FDR_NO308 <- Apply_FDR_Correction(p_val_NO308)
+```
+
+Next we show the number of statistically significant regions before and after FDR correction:
+
+
+```{r echo=FALSE, results='hold', comment=NA}
+cat(crayon::bold("- 68 REGIONS PARCELLATION:\n"))
+
+cat(" WITHOUT MATCH-IT\n")
+cat("Variable dcode:", sum(p_val_NO68[,"dcode"]<0.05),"/",length(p_val_NO68[,"dcode"]), "regions --> ", sum(p_val_FDR_NO68[,"dcode"]<0.05),"/",length(p_val_NO68[,"dcode"]),"regions\n" )
+cat("Variable dcode*age:",sum(p_val_NO68[,"dcode_age"]<0.05),"/",length(p_val_NO68[,"dcode_age"]), "regions -->", sum(p_val_FDR_NO68[,"dcode_age"]<0.05),"/",length(p_val_NO68[,"dcode_age"]),"regions")
+
+cat("\n\n WITH MATCH-IT\n")
+cat("Variable dcode:", sum(p_val_68[,"dcode"]<0.05),"/",length(p_val_68[,"dcode"]), "regions --> ", sum(p_val_FDR_68[,"dcode"]<0.05),"/",length(p_val_68[,"dcode"]),"regions\n" )
+cat("Variable dcode*age:",sum(p_val_68[,"dcode_age"]<0.05),"/",length(p_val_68[,"dcode_age"]), "regions -->", sum(p_val_FDR_68[,"dcode_age"]<0.05),"/",length(p_val_68[,"dcode_age"]),"regions")
+
+cat(crayon::bold("\n\n - 308 REGIONS PARCELLATION:\n"))
+
+cat(" WITHOUT MATCH-IT\n")
+cat("Variable dcode:", sum(p_val_NO308[,"dcode"]<0.05),"/",length(p_val_NO308[,"dcode"]), "regions --> ", sum(p_val_FDR_NO308[,"dcode"]<0.05),"/",length(p_val_NO308[,"dcode"]),"regions\n" )
+cat("Variable dcode*age:",sum(p_val_NO308[,"dcode_age"]<0.05),"/",length(p_val_NO308[,"dcode_age"]), "regions -->", sum(p_val_FDR_NO308[,"dcode_age"]<0.05),"/",length(p_val_NO308[,"dcode_age"]),"regions")
+
+cat("\n\n WITH MATCH-IT\n")
+cat("Variable dcode:", sum(p_val_308[,"dcode"]<0.05),"/",length(p_val_308[,"dcode"]), "regions --> ", sum(p_val_FDR_308[,"dcode"]<0.05),"/",length(p_val_308[,"dcode"]),"regions\n" )
+cat("Variable dcode*age:",sum(p_val_308[,"dcode_age"]<0.05),"/",length(p_val_308[,"dcode_age"]), "regions -->", sum(p_val_FDR_308[,"dcode_age"]<0.05),"/",length(p_val_308[,"dcode_age"]),"regions")
+```
+
+```{r eval=FALSE, include=FALSE}
+# PLOT p-values
+par(mfrow = c(2, 2), mai = c(0.9, 0.8, 0.2, 0.2))  # 2 rows and 2 columns
+x1 <- p_val[,"dcode"]
+x2 <- p_val_FDR[,"dcode"]
+x3 <- p_val[,"dcode_age"]
+x4 <- p_val_FDR[,"dcode_age"]
+
+hist(x1, main="p-vals (dcode)", col="antiquewhite3")
+hist(x2, main="p-vals with FDR (dcode)", col="lightblue3")
+hist(x3, main="p-vals (dcode_age)", col="antiquewhite3")
+hist(x4, main="p-vals with FDR (dcode_age)", col="lightblue3")
+```
+
+
+## Match-it dataframe (Age*Diagnosis) AFTER EXCLUDING DEVIANTS
+
+```{r, message=F}
+p_val_68 <- run_AgeDiagnosisModel(df_lC_matched_68,
+                               measure = "CT_freesurfer",
+                               Z = Zs_match_68,
+                               exclude_deviants = T)
+
+p_val_NO68 <- run_AgeDiagnosisModel(df_lC_NO_matched_68,
+                               measure = "CT_freesurfer",
+                               Z = Zs_NOmatch_68,
+                               exclude_deviants = T)
+
+p_val_308 <- run_AgeDiagnosisModel(df_lC_matched_308,
+                               measure = "thickness",
+                               Z = Zs_match_308,
+                               exclude_deviants = T)
+
+p_val_NO308 <- run_AgeDiagnosisModel(df_lC_NO_matched_308,
+                               measure = "thickness",
+                               Z = Zs_NOmatch_308,
+                               exclude_deviants = T)
+
+p_val_FDR_68    <- Apply_FDR_Correction(p_val_68)
+p_val_FDR_NO68  <- Apply_FDR_Correction(p_val_NO68)
+p_val_FDR_308   <- Apply_FDR_Correction(p_val_308)
+p_val_FDR_NO308 <- Apply_FDR_Correction(p_val_NO308)
+```
+
+```{r echo=FALSE, results='hold', comment=NA}
+cat(crayon::bold("- 68 REGIONS PARCELLATION:\n"))
+
+cat(" WITHOUT MATCH-IT\n")
+cat("Variable dcode:", sum(p_val_NO68[,"dcode"]<0.05),"/",length(p_val_NO68[,"dcode"]), "regions --> ", sum(p_val_FDR_NO68[,"dcode"]<0.05),"/",length(p_val_NO68[,"dcode"]),"regions\n" )
+cat("Variable dcode*age:",sum(p_val_NO68[,"dcode_age"]<0.05),"/",length(p_val_NO68[,"dcode_age"]), "regions -->", sum(p_val_FDR_NO68[,"dcode_age"]<0.05),"/",length(p_val_NO68[,"dcode_age"]),"regions")
+
+cat("\n\n WITH MATCH-IT\n")
+cat("Variable dcode:", sum(p_val_68[,"dcode"]<0.05),"/",length(p_val_68[,"dcode"]), "regions --> ", sum(p_val_FDR_68[,"dcode"]<0.05),"/",length(p_val_68[,"dcode"]),"regions\n" )
+cat("Variable dcode*age:",sum(p_val_68[,"dcode_age"]<0.05),"/",length(p_val_68[,"dcode_age"]), "regions -->", sum(p_val_FDR_68[,"dcode_age"]<0.05),"/",length(p_val_68[,"dcode_age"]),"regions")
+
+cat(crayon::bold("\n\n - 308 REGIONS PARCELLATION:\n"))
+
+cat(" WITHOUT MATCH-IT\n")
+cat("Variable dcode:", sum(p_val_NO308[,"dcode"]<0.05),"/",length(p_val_NO308[,"dcode"]), "regions --> ", sum(p_val_FDR_NO308[,"dcode"]<0.05),"/",length(p_val_NO308[,"dcode"]),"regions\n" )
+cat("Variable dcode*age:",sum(p_val_NO308[,"dcode_age"]<0.05),"/",length(p_val_NO308[,"dcode_age"]), "regions -->", sum(p_val_FDR_NO308[,"dcode_age"]<0.05),"/",length(p_val_NO308[,"dcode_age"]),"regions")
+
+cat("\n\n WITH MATCH-IT\n")
+cat("Variable dcode:", sum(p_val_308[,"dcode"]<0.05),"/",length(p_val_308[,"dcode"]), "regions --> ", sum(p_val_FDR_308[,"dcode"]<0.05),"/",length(p_val_308[,"dcode"]),"regions\n" )
+cat("Variable dcode*age:",sum(p_val_308[,"dcode_age"]<0.05),"/",length(p_val_308[,"dcode_age"]), "regions -->", sum(p_val_FDR_308[,"dcode_age"]<0.05),"/",length(p_val_308[,"dcode_age"]),"regions")
+```
+
+
+# Analysis of z-scores and computation of global scores
+
+The following tables and results represent, **in terms of samples**, the number of regions deviated ($Z<-1.96$ and $Z>1.96$), calculated for each timepoint ($timepoint=1,2,3$) and differentiated between controls and patients Again, the number of samples refers to the total number of regions, knowing that each subject can have a total of 68 or 308 regions.
+
+
+```{r eval=FALSE, include=FALSE}
+Z <- Zs_NOmatch_68 %>% # change match / NOmatch
+  mutate(deviant = ifelse(z < -1.96 | z > 1.96, 1, 0)) %>% 
+  group_by(group, deviant) %>%
+  dplyr::summarise(n=n()) 
+
+table(Z$timepoint) # 1st row
+table(Z$deviant, Z$timepoint) # 1st row is 2nd row
+t(table(Z$timepoint, Z$group))  # 1st row is 3rd row and 2nd row is 5th row
+table(Z$deviant, Z$timepoint, Z$group)  # 2nd row is 4th and 6th row
+
+t(round(t(table(Z$deviant, Z$timepoint))*100/c(nrow(subset(Z, timepoint==1)), 
+                                               nrow(subset(Z, timepoint==2)),
+                                               nrow(subset(Z, timepoint==3))),
+        2)) # Percentages of the 2nd row
+
+round(t(table(Z$deviant, Z$timepoint, Z$group)[2,1:3,])[1,1:3]*100/
+        t(table(Z$timepoint, Z$group))[1,1:3],2) # controls, percentages of the 4th row
+
+round(t(table(Z$deviant, Z$timepoint, Z$group)[2,1:3,])[2,1:3]*100/
+        t(table(Z$timepoint, Z$group))[2,1:3],2) # pats, percentages of the 6th row
+```
+
+```{r echo=FALSE, warning=F, message = F}
+Z <- Zs_NOmatch_68 %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(z < -1.96 | z > 1.96, 1, 0)) %>% 
+  dplyr::group_by(group) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,3),
+                perc_nondev=round(nreg_nondev*100/tot,3))
+group=rep(Z$group,2)
+dev=c(1,1,1,0,0,0)
+nreg=c(Z$nreg_dev, Z$nreg_nondev)
+perc=c(Z$perc_dev, Z$perc_nondev)
+DF_Z <- data.frame("group"=group, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+
+DF_Z <- transform(DF_Z,
+          group = as.factor(group),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+DF_Z<-subset(DF_Z, dev==1)
+p1<-ggplot(DF_Z, aes(x = group, y=perc, fill=dev)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(label=paste0(perc,"%")), vjust=1.6, size=3.5)+
+  labs(color = "Z\n",
+       title="68 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        # legend.title = element_text(size=10),
+        # legend.text = element_text(size=10),
+        # legend.margin=margin(0, 0, 0, -30)) +
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.margin=margin(0, 0, 0, -30),
+        legend.position = "none") +
+  scale_fill_discrete(name = "Z", labels = c("Deviant","Normal"))+
+  scale_fill_manual(labels = c("Deviant","Normal"), values=c("midnightblue","green4"))
+  
+  
+#######
+Z <- Zs_NOmatch_308 %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(z < -1.96 | z > 1.96, 1, 0)) %>% 
+  dplyr::group_by(group) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,3),
+                perc_nondev=round(nreg_nondev*100/tot,3))
+group=rep(Z$group,2)
+dev=c(1,1,1,0,0,0)
+nreg=c(Z$nreg_dev, Z$nreg_nondev)
+perc=c(Z$perc_dev, Z$perc_nondev)
+DF_Z <- data.frame("group"=group, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+
+DF_Z <- transform(DF_Z,
+          group = as.factor(group),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+DF_Z<-subset(DF_Z, dev==1)
+p2<-ggplot(DF_Z, aes(x = group, y=perc, fill=dev)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(label=paste0(perc,"%")), vjust=1.6, size=3.5)+
+  labs(color = "Z\n",
+       title="308 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.margin=margin(0, 0, 0, -30),
+        legend.position = "none") +
+  scale_fill_discrete(name = "Z", labels = c("Deviant","Normal"))+
+  scale_fill_manual(labels = c("Deviant","Normal"), values=c("midnightblue","green4"))
+
+  
+  
+###### 
+Z <- Zs_match_68 %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(z < -1.96 | z > 1.96, 1, 0)) %>% 
+  dplyr::group_by(group) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,3),
+                perc_nondev=round(nreg_nondev*100/tot,3))
+group=rep(Z$group,2)
+dev=c(1,1,1,0,0,0)
+nreg=c(Z$nreg_dev, Z$nreg_nondev)
+perc=c(Z$perc_dev, Z$perc_nondev)
+DF_Z <- data.frame("group"=group, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+
+DF_Z <- transform(DF_Z,
+          group = as.factor(group),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+DF_Z<-subset(DF_Z, dev==1)
+p3<-ggplot(DF_Z, aes(x = group, y=perc, fill=dev)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(label=paste0(perc,"%")), vjust=1.6, size=3.5)+
+  labs(color = "Z\n",
+       title="68 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.margin=margin(0, 0, 0, -30),
+        legend.position = "none") +
+  scale_fill_discrete(name = "Z", labels = c("Deviant","Normal"))+
+  scale_fill_manual(labels = c("Deviant","Normal"), values=c("midnightblue","green4"))
+
+#####
+
+Z <- Zs_match_308 %>% # change match / NOmatch
+  dplyr::mutate(deviant = ifelse(z < -1.96 | z > 1.96, 1, 0)) %>% 
+  dplyr::group_by(group) %>%
+  dplyr::summarise(nreg_dev = sum(deviant==1),
+              nreg_nondev = sum(deviant==0))  %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(tot=sum(nreg_dev+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev=round(nreg_dev*100/tot,3),
+                perc_nondev=round(nreg_nondev*100/tot,3))
+group=rep(Z$group,2)
+dev=c(1,1,1,0,0,0)
+nreg=c(Z$nreg_dev, Z$nreg_nondev)
+perc=c(Z$perc_dev, Z$perc_nondev)
+DF_Z <- data.frame("group"=group, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+
+DF_Z <- transform(DF_Z,
+          group = as.factor(group),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+DF_Z<-subset(DF_Z, dev==1)
+p4<-ggplot(DF_Z, aes(x = group, y=perc, fill=dev)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(label=paste0(perc,"%")), vjust=1.6, size=3.5)+
+  labs(color = "Z\n",
+       title="308 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_blank(),
+        legend.text = element_blank(),
+        legend.margin=margin(0, 0, 0, -30),
+        legend.position = "none") +
+  scale_fill_discrete(name = "Z", labels = c("Deviant","Normal"))+
+  scale_fill_manual(labels = c("Deviant","Normal"), values=c("midnightblue","green4"))
+  
+
+# figure <- ggarrange(p1, p2, p3, p4, ncol = 2, nrow = 2, 
+#                     legend = "right", common.legend = TRUE)
+figure <- ggarrange(p1, p2, p3, p4, ncol = 2, nrow = 2)
+annotate_figure(figure,
+                left = text_grob("Number of samples", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("Data used to predict", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Analysis of regions deviant (|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+rm(p1, p2, p3, p4, figure, dev, group, nreg, perc)
+```
+
+In the following, we chose to work with the matched dataset and the Zs derived from its lme model, providing a better statistical support for the analysis.
+
+***
+
+Taking into account the type of the deviation (infra-normal deviation $Z<-1.96$, supra-normal deviation $Z>1.96$, or deviant $|Z|>1.96$):
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+Z <- Zs_NOmatch_68 %>%
+  dplyr::mutate(deviant = ifelse(z > -1.96 & z < 1.96, 0, z)) %>%
+  dplyr::mutate(deviant = ifelse(z < -1.96, -1, deviant)) %>%
+  dplyr::mutate(deviant = ifelse(z >  1.96, 1 , deviant)) %>%
+  dplyr::group_by(group) %>%
+  
+  dplyr::summarise(nreg_dev_pos = sum(deviant==1),
+              nreg_nondev = sum(deviant==0),
+              nreg_dev_neg = sum(deviant==-1))  %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(tot=sum(nreg_dev_neg+nreg_dev_pos+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev_pos=round(nreg_dev_pos*100/tot,3),
+                perc_dev_neg=round(nreg_dev_neg*100/tot,3),
+                perc_nondev=round(nreg_nondev*100/tot,3))
+group=rep(Z$group,2)
+dev=c(1,1,1,-1,-1,-1)
+nreg=c(Z$nreg_dev_pos, Z$nreg_dev_neg)
+perc=c(Z$perc_dev_pos, Z$perc_dev_neg)
+DF_Z <- data.frame("group"=group, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+
+DF_Z <- DF_Z %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(text_pos=cumsum(perc))
+
+DF_Z <- transform(DF_Z,
+          group = as.factor(group),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+p1<- ggplot(DF_Z, aes(x = group, y=perc, fill=dev)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(y=text_pos, label=paste0(perc,"%")), 
+            size=3.5, vjust=1.5, position=position_dodge(0.9)) +
+  labs(color = "  ",
+       title="68 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_discrete(name = "Z", labels = c("Infra-dev","Supra-dev"))+
+  scale_fill_manual(labels = c("Infra-dev","Supra-dev"), values=c("midnightblue","green4"))
+
+
+
+########## 
+Z <- Zs_NOmatch_308 %>%
+  dplyr::mutate(deviant = ifelse(z > -1.96 & z < 1.96, 0, z)) %>%
+  dplyr::mutate(deviant = ifelse(z < -1.96, -1, deviant)) %>%
+  dplyr::mutate(deviant = ifelse(z >  1.96, 1 , deviant)) %>%
+  dplyr::group_by(group) %>%
+  
+  dplyr::summarise(nreg_dev_pos = sum(deviant==1),
+              nreg_nondev = sum(deviant==0),
+              nreg_dev_neg = sum(deviant==-1))  %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(tot=sum(nreg_dev_neg+nreg_dev_pos+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev_pos=round(nreg_dev_pos*100/tot,3),
+                perc_dev_neg=round(nreg_dev_neg*100/tot,3),
+                perc_nondev=round(nreg_nondev*100/tot,3))
+group=rep(Z$group,2)
+dev=c(1,1,1,-1,-1,-1)
+nreg=c(Z$nreg_dev_pos, Z$nreg_dev_neg)
+perc=c(Z$perc_dev_pos, Z$perc_dev_neg)
+DF_Z <- data.frame("group"=group, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+
+DF_Z <- DF_Z %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(text_pos=cumsum(perc))
+
+DF_Z <- transform(DF_Z,
+          group = as.factor(group),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+p2<- ggplot(DF_Z, aes(x = group, y=perc, fill=dev)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(y=text_pos, label=paste0(perc,"%")), 
+            size=3.5, vjust=1.5, position=position_dodge(0.9)) +
+  labs(color = "  ",
+       title="308 regions (NO Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_discrete(name = "Z", labels = c("Infra-dev","Supra-dev"))+
+  scale_fill_manual(labels = c("Infra-dev","Supra-dev"), values=c("midnightblue","green4"))
+
+############
+
+Z <- Zs_match_68 %>%
+  dplyr::mutate(deviant = ifelse(z > -1.96 & z < 1.96, 0, z)) %>%
+  dplyr::mutate(deviant = ifelse(z < -1.96, -1, deviant)) %>%
+  dplyr::mutate(deviant = ifelse(z >  1.96, 1 , deviant)) %>%
+  dplyr::group_by(group) %>%
+  
+  dplyr::summarise(nreg_dev_pos = sum(deviant==1),
+              nreg_nondev = sum(deviant==0),
+              nreg_dev_neg = sum(deviant==-1))  %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(tot=sum(nreg_dev_neg+nreg_dev_pos+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev_pos=round(nreg_dev_pos*100/tot,3),
+                perc_dev_neg=round(nreg_dev_neg*100/tot,3),
+                perc_nondev=round(nreg_nondev*100/tot,3))
+group=rep(Z$group,2)
+dev=c(1,1,1,-1,-1,-1)
+nreg=c(Z$nreg_dev_pos, Z$nreg_dev_neg)
+perc=c(Z$perc_dev_pos, Z$perc_dev_neg)
+DF_Z <- data.frame("group"=group, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+
+DF_Z <- DF_Z %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(text_pos=cumsum(perc))
+
+DF_Z <- transform(DF_Z,
+          group = as.factor(group),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+p3<- ggplot(DF_Z, aes(x = group, y=perc, fill=dev)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(y=text_pos, label=paste0(perc,"%")), 
+            size=3.5, vjust=1.5, position=position_dodge(0.9)) +
+  labs(color = "  ",
+       title="68 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_discrete(name = "Z", labels = c("Infra-dev","Supra-dev"))+
+  scale_fill_manual(labels = c("Infra-dev","Supra-dev"), values=c("midnightblue","green4"))
+
+
+#######  
+
+Z <- Zs_match_308 %>%
+  dplyr::mutate(deviant = ifelse(z > -1.96 & z < 1.96, 0, z)) %>%
+  dplyr::mutate(deviant = ifelse(z < -1.96, -1, deviant)) %>%
+  dplyr::mutate(deviant = ifelse(z >  1.96, 1 , deviant)) %>%
+  dplyr::group_by(group) %>%
+  
+  dplyr::summarise(nreg_dev_pos = sum(deviant==1),
+              nreg_nondev = sum(deviant==0),
+              nreg_dev_neg = sum(deviant==-1))  %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(tot=sum(nreg_dev_neg+nreg_dev_pos+nreg_nondev)) %>%
+  dplyr::mutate(perc_dev_pos=round(nreg_dev_pos*100/tot,3),
+                perc_dev_neg=round(nreg_dev_neg*100/tot,3),
+                perc_nondev=round(nreg_nondev*100/tot,3))
+group=rep(Z$group,2)
+dev=c(1,1,1,-1,-1,-1)
+nreg=c(Z$nreg_dev_pos, Z$nreg_dev_neg)
+perc=c(Z$perc_dev_pos, Z$perc_dev_neg)
+DF_Z <- data.frame("group"=group, "dev"=dev, "nreg"=nreg, "perc"=perc)
+
+
+DF_Z <- DF_Z %>%
+  dplyr::group_by(group) %>%
+  dplyr::mutate(text_pos=cumsum(perc))
+
+DF_Z <- transform(DF_Z,
+          group = as.factor(group),
+          dev = as.factor(dev),
+          nreg = as.numeric(nreg),
+          perc = as.numeric(perc))
+
+p4<- ggplot(DF_Z, aes(x = group, y=perc, fill=dev)) + 
+  geom_bar(stat="identity", alpha=0.3) +
+  geom_text(aes(y=text_pos, label=paste0(perc,"%")), 
+            size=3.5, vjust=1.5, position=position_dodge(0.9)) +
+  labs(color = "  ",
+       title="308 regions (Match-it)",
+       x =" ",
+       y = " ") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=14),
+        axis.text=element_text(size=10),
+        axis.title=element_text(size=10,face="bold"),
+        legend.title = element_text(size=10),
+        legend.text = element_text(size=10),
+        legend.margin=margin(0, 0, 0, -30)) +
+  scale_fill_discrete(name = "Z", labels = c("Infra-dev","Supra-dev"))+
+  scale_fill_manual(labels = c("Infra-dev","Supra-dev"), values=c("midnightblue","green4"))
+
+
+figure <- ggarrange(p1, p2, p3, p4, ncol = 2, nrow = 2,
+                    legend = "right", common.legend = TRUE)
+annotate_figure(figure,
+                left = text_grob("Number of samples", rot = 90, face = "bold", 
+                                 size = 15, color = "black"),
+                bottom = text_grob("Data used to predict", 
+                                   face = "bold", size = 15, color = "black"),
+                fig.lab.face = "bold",
+                top = text_grob("Analysis of regions deviant (|Z|>1.96)\n", 
+                                face = "bold", size = 15, color = "black"))
+#rm(p1, p2, p3, p4, figure, dev, group, nreg, perc)
+
+```
+
+
+
+*** 
+
+We computed the number of subjects that are **deviant at timepoint 1** and stay **deviant in subsequent timepoints**, for each region. 
+
+**68 REGIONS (Match-it)**
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, include=FALSE}
+Z1 <- Zs_match_68 %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev))  %>%
+  dplyr::filter(mul==1)
+
+Z <- Zs_match_68 %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev)) %>% # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region) %>%           # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+max  <- max(Z$sol)
+perc <- round(max*100/length(unique(Zs_match_68$subID)),3) # Percentage in the text
+```
+
+```{r echo=FALSE, comment=NA}
+kable(head(Z,3))
+
+cat("\nA maximum of ",max,"subjects ",paste0("(",perc,"%")," of total subjects) fulfill that condition for any region.")
+cat("\nTotal number of regions in which at least one subject deviates during all its timepoints:",length(unique(Z1$region)))
+cat("\nTotal number of subjects deviating during all their timepoints in any region:",length(Z1$subID))
+# sort(table(Z1$subID))     # Número de regiones en las que se desvía cada sujeto
+# length(unique(Z1$region)) # Número total de regiones en las que se desvía al menos un sujeto durante todos sus timepoint
+# length(Z1$subID)          # Número total de sujetos que se desvían durante todos sus timepoint en alguna región
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_match_68
+Z <- df %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID, group) %>%
+  dplyr::summarise(mul = prod(dev)) %>%       # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region,group)     %>%       # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul))  %>%
+  dplyr::arrange(desc(sol))
+
+df1<-subset(df,timepoint==1)
+df2<-subset(df1,group=="train_control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="train_control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3)
+cat("\nA maximum of ",max,"controls (used to train,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+
+df2<-subset(df1,group=="test_control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="test_control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"controls (used to test,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+
+df2<-subset(df1,group=="test_patient")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="test_patient")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"patients (used to test,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+**68 REGIONS (NO Match-it)**
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, include=FALSE}
+Z1 <- Zs_NOmatch_68 %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev))  %>%
+  dplyr::filter(mul==1)
+
+Z <- Zs_NOmatch_68 %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev)) %>% # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region) %>%           # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+max  <- max(Z$sol)
+perc <- round(max*100/length(unique(Zs_NOmatch_68$subID)),3) # Percentage in the text
+```
+
+```{r echo=FALSE, comment=NA}
+kable(head(Z,3))
+
+cat("\nA maximum of ",max,"subjects ",paste0("(",perc,"%")," of total subjects) fulfill that condition for any region.")
+cat("\nTotal number of regions in which at least one subject deviates during all its timepoints:",length(unique(Z1$region)))
+cat("\nTotal number of subjects deviating during all their timepoints in any region:",length(Z1$subID))
+# sort(table(Z1$subID))     # Número de regiones en las que se desvía cada sujeto
+# length(unique(Z1$region)) # Número total de regiones en las que se desvía al menos un sujeto durante todos sus timepoint
+# length(Z1$subID)          # Número total de sujetos que se desvían durante todos sus timepoint en alguna región
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_NOmatch_68
+Z <- df %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID, group) %>%
+  dplyr::summarise(mul = prod(dev)) %>%       # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region,group)     %>%       # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul))  %>%
+  dplyr::arrange(desc(sol))
+
+df1<-subset(df,timepoint==1)
+df2<-subset(df1,group=="train_control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="train_control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3)
+cat("\nA maximum of ",max,"controls (used to train,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+
+df2<-subset(df1,group=="test_control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="test_control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"controls (used to test,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+
+df2<-subset(df1,group=="test_patient")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="test_patient")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"patients (used to test,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+**308 REGIONS (Match-it)**
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, include=FALSE}
+Z1 <- Zs_match_308 %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev))  %>%
+  dplyr::filter(mul==1)
+
+Z <- Zs_match_308 %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev)) %>% # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region) %>%           # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+max  <- max(Z$sol)
+perc <- round(max*100/length(unique(Zs_match_308$subID)),3) # Percentage in the text
+```
+
+```{r echo=FALSE, comment=NA}
+kable(head(Z,3))
+
+cat("\nA maximum of ",max,"subjects ",paste0("(",perc,"%")," of total subjects) fulfill that condition for any region.")
+cat("\nTotal number of regions in which at least one subject deviates during all its timepoints:",length(unique(Z1$region)))
+cat("\nTotal number of subjects deviating during all their timepoints in any region:",length(Z1$subID))
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_match_308
+Z <- df %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID, group) %>%
+  dplyr::summarise(mul = prod(dev)) %>%       # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region,group)     %>%       # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul))  %>%
+  dplyr::arrange(desc(sol))
+
+df1<-subset(df,timepoint==1)
+df2<-subset(df1,group=="train_control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="train_control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3)
+cat("\nA maximum of ",max,"controls (used to train,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+
+df2<-subset(df1,group=="test_control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="test_control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"controls (used to test,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+
+df2<-subset(df1,group=="test_patient")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="test_patient")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"patients (used to test,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+**308 REGIONS (NO Match-it)**
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, include=FALSE}
+Z1 <- Zs_NOmatch_308 %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev))  %>%
+  dplyr::filter(mul==1)
+
+Z <- Zs_NOmatch_308 %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(dev)) %>% # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region) %>%           # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+max  <- max(Z$sol)
+perc <- round(max*100/length(unique(Zs_NOmatch_308$subID)),3) # Percentage in the text
+```
+
+```{r echo=FALSE, comment=NA}
+kable(head(Z,3))
+
+cat("\nA maximum of ",max,"subjects ",paste0("(",perc,"%")," of total subjects) fulfill that condition for any region.")
+cat("\nTotal number of regions in which at least one subject deviates during all its timepoints:",length(unique(Z1$region)))
+cat("\nTotal number of subjects deviating during all their timepoints in any region:",length(Z1$subID))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_NOmatch_308
+Z <- df %>%
+  dplyr::mutate(dev = ifelse((z < -1.96 | z > 1.96), 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::group_by(region, subID, group) %>%
+  dplyr::summarise(mul = prod(dev)) %>%       # Multiplicamos los dev de todos los tp de cada subject por cada región
+  dplyr::group_by(region,group)     %>%       # Así, sólo valen distinto de 0 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul))  %>%
+  dplyr::arrange(desc(sol))
+
+df1<-subset(df,timepoint==1)
+df2<-subset(df1,group=="train_control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="train_control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3)
+cat("\nA maximum of ",max,"controls (used to train,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+
+df2<-subset(df1,group=="test_control")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="test_control")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"controls (used to test,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+
+df2<-subset(df1,group=="test_patient")
+n  <-length(unique(df2$subID))
+Z2 <- subset(Z, group=="test_patient")
+max  <- max(Z2$sol)
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"patients (used to test,",paste0(perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+
+***
+
+We computed the number of subjects that are **not deviant at timepoint 1** but become **deviant in subsequent timepoints**, for each region. 
+
+**68 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# Los que cumplen la condición valen 1, el resto 0. Al multiplicar sólo dan 1 los que cumplen la condición.
+df <- Zs_match_68
+Z <- df %>%
+  dplyr::mutate(non_dev_tp1 = ifelse((z > -1.96 | z < 1.96)&timepoint==1, 1, 0), # Si no se desvía en tp1 vale 1
+         dev_fup = ifelse((z < -1.96 | z > 1.96)&timepoint>1, 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::mutate(cond=non_dev_tp1+dev_fup)%>% # Sumamos ambas columnas para obtener una sólo
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
+  dplyr::group_by(region) %>%            # Así, sólo valen 1 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+kable(head(Z,3))
+max <- max(Z$sol)
+df1 <-subset(df,timepoint==1)
+n   <-length(unique(df1$subID))
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"subjects",paste0("(",perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+
+**68 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# Los que cumplen la condición valen 1, el resto 0. Al multiplicar sólo dan 1 los que cumplen la condición.
+df <- Zs_NOmatch_68
+Z <- df %>%
+  dplyr::mutate(non_dev_tp1 = ifelse((z > -1.96 | z < 1.96)&timepoint==1, 1, 0), # Si no se desvía en tp1 vale 1
+         dev_fup = ifelse((z < -1.96 | z > 1.96)&timepoint>1, 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::mutate(cond=non_dev_tp1+dev_fup)%>% # Sumamos ambas columnas para obtener una sólo
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
+  dplyr::group_by(region) %>%            # Así, sólo valen 1 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+kable(head(Z,3))
+max <- max(Z$sol)
+df1 <-subset(df,timepoint==1)
+n   <-length(unique(df1$subID))
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"subjects",paste0("(",perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+
+**308 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# Los que cumplen la condición valen 1, el resto 0. Al multiplicar sólo dan 1 los que cumplen la condición.
+df <- Zs_match_308
+Z <- df %>%
+  dplyr::mutate(non_dev_tp1 = ifelse((z > -1.96 | z < 1.96)&timepoint==1, 1, 0), # Si no se desvía en tp1 vale 1
+         dev_fup = ifelse((z < -1.96 | z > 1.96)&timepoint>1, 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::mutate(cond=non_dev_tp1+dev_fup)%>% # Sumamos ambas columnas para obtener una sólo
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
+  dplyr::group_by(region) %>%            # Así, sólo valen 1 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+kable(head(Z,3))
+max <- max(Z$sol)
+df1 <-subset(df,timepoint==1)
+n   <-length(unique(df1$subID))
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"subjects",paste0("(",perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+
+**308 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# Los que cumplen la condición valen 1, el resto 0. Al multiplicar sólo dan 1 los que cumplen la condición.
+df <- Zs_NOmatch_308
+Z <- df %>%
+  dplyr::mutate(non_dev_tp1 = ifelse((z > -1.96 | z < 1.96)&timepoint==1, 1, 0), # Si no se desvía en tp1 vale 1
+         dev_fup = ifelse((z < -1.96 | z > 1.96)&timepoint>1, 1, 0)) %>%  # Si se desvía vale 1
+  dplyr::mutate(cond=non_dev_tp1+dev_fup)%>% # Sumamos ambas columnas para obtener una sólo
+  dplyr::group_by(region, subID) %>%
+  dplyr::summarise(mul = prod(cond)) %>% # Multiplicamos todos los tp de cada subject para cada región
+  dplyr::group_by(region) %>%            # Así, sólo valen 1 los que tienen todos los tp=1
+  dplyr::summarise(sol = sum(mul)) %>%
+  dplyr::arrange(desc(sol))
+
+kable(head(Z,3))
+max <- max(Z$sol)
+df1 <-subset(df,timepoint==1)
+n   <-length(unique(df1$subID))
+perc <- round(max*100/n,3) 
+cat("\nA maximum of ",max,"subjects",paste0("(",perc,"%"),"of total) fulfill that condition for any region.")
+```
+
+
+***
+
+**1. Percentage of patients deviated from the normative range for any single cortical region**
+
+**68 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# For 1
+df<-Zs_match_68
+for (tp in 1:3){ # for each timepoint
+  Z <- df %>%
+    dplyr::filter(group=="test_patient") %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(dev = ifelse(z < -1.96 | z > 1.96, 1, 0))%>%
+    dplyr::group_by(region)%>%
+    dplyr::summarise(nsub_dev = sum(dev==1),
+              nsub_nondev = sum(dev==0))%>%
+    dplyr::mutate(perc_dev = round(100* nsub_dev/(nsub_dev+nsub_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+  # head(Z,3)
+  perc <- as.numeric(Z[1,"perc_dev"])
+  cat("+ Timepoint", tp,": No more than ", perc,"% of patients deviated from the normative range \n for any single cortical region.\n")
+  #length(unique(Z$subID)) # Number of patients for each timepoint
+}
+#a<-length(unique(subset(subset(df, group=="test_patient"),timepoint==3)$subID))
+```
+
+**68 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# For 1
+df<-Zs_NOmatch_68
+for (tp in 1:3){ # for each timepoint
+  Z <- df %>%
+    dplyr::filter(group=="test_patient") %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(dev = ifelse(z < -1.96 | z > 1.96, 1, 0))%>%
+    dplyr::group_by(region)%>%
+    dplyr::summarise(nsub_dev = sum(dev==1),
+              nsub_nondev = sum(dev==0))%>%
+    dplyr::mutate(perc_dev = round(100* nsub_dev/(nsub_dev+nsub_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+  # head(Z,3)
+  perc <- as.numeric(Z[1,"perc_dev"])
+  cat("+ Timepoint", tp,": No more than ", perc,"% of patients deviated from the normative range \n for any single cortical region.\n")
+  #length(unique(Z$subID)) # Number of patients for each timepoint
+}
+#a<-length(unique(subset(subset(df, group=="test_patient"),timepoint==3)$subID))
+```
+
+
+**308 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# For 1
+df<-Zs_match_308
+for (tp in 1:3){ # for each timepoint
+  Z <- df %>%
+    dplyr::filter(group=="test_patient") %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(dev = ifelse(z < -1.96 | z > 1.96, 1, 0))%>%
+    dplyr::group_by(region)%>%
+    dplyr::summarise(nsub_dev = sum(dev==1),
+              nsub_nondev = sum(dev==0))%>%
+    dplyr::mutate(perc_dev = round(100* nsub_dev/(nsub_dev+nsub_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+  # head(Z,3)
+  perc <- as.numeric(Z[1,"perc_dev"])
+  cat("+ Timepoint", tp,": No more than ", perc,"% of patients deviated from the normative range \n for any single cortical region.\n")
+  #length(unique(Z$subID)) # Number of patients for each timepoint
+}
+#a<-length(unique(subset(subset(df, group=="test_patient"),timepoint==3)$subID))
+```
+
+
+**308 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# For 1
+df<-Zs_NOmatch_308
+for (tp in 1:3){ # for each timepoint
+  Z <- df %>%
+    dplyr::filter(group=="test_patient") %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(dev = ifelse(z < -1.96 | z > 1.96, 1, 0))%>%
+    dplyr::group_by(region)%>%
+    dplyr::summarise(nsub_dev = sum(dev==1),
+              nsub_nondev = sum(dev==0))%>%
+    dplyr::mutate(perc_dev = round(100* nsub_dev/(nsub_dev+nsub_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+  # head(Z,3)
+  perc <- as.numeric(Z[1,"perc_dev"])
+  cat("+ Timepoint", tp,": No more than ", perc,"% of patients deviated from the normative range \n for any single cortical region.\n")
+  #length(unique(Z$subID)) # Number of patients for each timepoint
+}
+#a<-length(unique(subset(subset(df, group=="test_patient"),timepoint==3)$subID))
+```
+
+
+***
+**2. Most common regions with infra-normal deviations. Percentage of patients.**
+
+**68 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_match_68
+for (tp in 1:3){ # for each timepoint
+  cat("Timepoint",tp,":\n")
+  # tp=1 # borrar
+  Z_all <- df %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(deviant = ifelse(z < -1.96, 1, 0)) %>% # Infra-normal
+    dplyr::group_by(region) %>%
+    dplyr::summarise(nreg_dev = sum(deviant==1),
+                 nreg_nondev  = sum(deviant==0)) %>%
+    dplyr::mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+
+  reg <- as.character(Z_all[1,"region"])
+  cat("+ Timepoint", tp,": The region with the most infra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev),"%)")," \n")
+  # Z_pat <- df %>%
+  #   dplyr::filter(group=="test_patient") %>% # only for patients
+  #   dplyr::filter(timepoint==tp) %>%
+  #   dplyr::mutate(deviant = ifelse(z < -1.96, 1, 0))%>% # Infra-normal
+  #   dplyr::group_by(region) %>%
+  #   dplyr::summarise(nreg_dev = sum(deviant==1),
+  #                nreg_nondev  = sum(deviant==0)) %>%
+  #   dplyr::mutate(perc_dev    = round(100* nreg_dev/(nreg_dev+nreg_nondev),2)) %>%
+  #   dplyr::arrange(desc(perc_dev))
+  # 
+  # perc <- as.numeric(subset(Z_pat, region==paste0(reg))[1,"perc_dev"])
+  # cat("Percentage in patients:",perc,"%\n\n")
+}
+```
+
+
+**68 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_NOmatch_68
+for (tp in 1:3){ # for each timepoint
+  cat("Timepoint",tp,":\n")
+  # tp=1 # borrar
+  Z_all <- df %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(deviant = ifelse(z < -1.96, 1, 0)) %>% # Infra-normal
+    dplyr::group_by(region) %>%
+    dplyr::summarise(nreg_dev = sum(deviant==1),
+                 nreg_nondev  = sum(deviant==0)) %>%
+    dplyr::mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+
+  reg <- as.character(Z_all[1,"region"])
+  cat("+ Timepoint", tp,": The region with the most infra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev),"%)")," \n")
+}
+```
+
+
+**308 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_match_308
+for (tp in 1:3){ # for each timepoint
+  cat("Timepoint",tp,":\n")
+  # tp=1 # borrar
+  Z_all <- df %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(deviant = ifelse(z < -1.96, 1, 0)) %>% # Infra-normal
+    dplyr::group_by(region) %>%
+    dplyr::summarise(nreg_dev = sum(deviant==1),
+                 nreg_nondev  = sum(deviant==0)) %>%
+    dplyr::mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+
+  reg <- as.character(Z_all[1,"region"])
+  cat("+ Timepoint", tp,": The region with the most infra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev),"%)")," \n")
+}
+```
+
+
+**308 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_NOmatch_308
+for (tp in 1:3){ # for each timepoint
+  cat("Timepoint",tp,":\n")
+  # tp=1 # borrar
+  Z_all <- df %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(deviant = ifelse(z < -1.96, 1, 0)) %>% # Infra-normal
+    dplyr::group_by(region) %>%
+    dplyr::summarise(nreg_dev = sum(deviant==1),
+                 nreg_nondev  = sum(deviant==0)) %>%
+    dplyr::mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+
+  reg <- as.character(Z_all[1,"region"])
+  cat("+ Timepoint", tp,": The region with the most infra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev),"%)")," \n")
+}
+```
+
+***
+**3. Most common regions with supra-normal deviations. Percentage of individuals.**
+
+
+**68 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_match_68
+for (tp in 1:3){ # for each timepoint
+  cat("Timepoint",tp,":\n")
+  # tp=1 # borrar
+  Z_all <- df %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(deviant = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
+    dplyr::group_by(region) %>%
+    dplyr::summarise(nreg_dev = sum(deviant==1),
+                 nreg_nondev  = sum(deviant==0)) %>%
+    dplyr::mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+
+  reg <- as.character(Z_all[1,"region"])
+  cat("+ Timepoint", tp,": The region with the most supra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev),"%)")," \n")
+}
+```
+
+
+**68 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_NOmatch_68
+for (tp in 1:3){ # for each timepoint
+  cat("Timepoint",tp,":\n")
+  # tp=1 # borrar
+  Z_all <- df %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(deviant = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
+    dplyr::group_by(region) %>%
+    dplyr::summarise(nreg_dev = sum(deviant==1),
+                 nreg_nondev  = sum(deviant==0)) %>%
+    dplyr::mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+
+  reg <- as.character(Z_all[1,"region"])
+  cat("+ Timepoint", tp,": The region with the most supra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev),"%)")," \n")
+}
+```
+
+
+**308 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_match_308
+for (tp in 1:3){ # for each timepoint
+  cat("Timepoint",tp,":\n")
+  # tp=1 # borrar
+  Z_all <- df %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(deviant = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
+    dplyr::group_by(region) %>%
+    dplyr::summarise(nreg_dev = sum(deviant==1),
+                 nreg_nondev  = sum(deviant==0)) %>%
+    dplyr::mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+
+  reg <- as.character(Z_all[1,"region"])
+  cat("+ Timepoint", tp,": The region with the most supra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev),"%)")," \n")
+}
+```
+
+
+**308 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_NOmatch_308
+for (tp in 1:3){ # for each timepoint
+  cat("Timepoint",tp,":\n")
+  # tp=1 # borrar
+  Z_all <- df %>%
+    dplyr::filter(timepoint==tp) %>%
+    dplyr::mutate(deviant = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
+    dplyr::group_by(region) %>%
+    dplyr::summarise(nreg_dev = sum(deviant==1),
+                 nreg_nondev  = sum(deviant==0)) %>%
+    dplyr::mutate(perc_dev = round(100* nreg_dev/(nreg_dev+nreg_nondev),2)) %>%
+    dplyr::arrange(desc(perc_dev))
+
+  reg <- as.character(Z_all[1,"region"])
+  cat("+ Timepoint", tp,": The region with the most supra-normal deviations is:\n ",
+      reg,paste0("(",max(Z_all$perc_dev),"%)")," \n")
+}
+```
+
+
+***
+
+**4. Percentage of subjects with at least one region infra-normal deviated. Patients vs Healthy controls.**
+
+and 
+
+**5. Percentage of subjects with at least one region supra-normal deviated. Patients vs Healthy controls.**
+
+
+
+**68 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# For 4 and 5
+df <- Zs_match_68
+for (tp in 1:3){ # for each timepoint
+  Z <- df %>%
+    dplyr::filter(timepoint==tp)    %>%
+    dplyr::mutate(deviant_infra = ifelse(z < -1.96, 1, 0))%>% # Infra-normal
+    dplyr::mutate(deviant_supra = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
+    #dplyr::group_by(subID) %>%
+    dplyr::group_by(subID, group) %>%
+    dplyr::summarise(nreg_dev_infra = sum(deviant_infra==1),  # At least one region deviated
+                     nreg_dev_supra = sum(deviant_supra==1)) %>%
+    dplyr::mutate(deviant_infra = ifelse(nreg_dev_infra>0, 1, 0),# At least one region deviated
+                  deviant_supra = ifelse(nreg_dev_supra>0, 1, 0)) %>%
+    dplyr::group_by(group) %>%
+    dplyr::summarise(pat_dev_infra = sum(deviant_infra==1),
+              pat_nondev_infra = sum(deviant_infra==0),
+              pat_dev_supra    = sum(deviant_supra==1),
+              pat_nondev_supra = sum(deviant_supra==0)) %>%
+    dplyr::mutate(perc_dev_infra = round(100* pat_dev_infra/(pat_dev_infra+pat_nondev_infra),2),
+                  perc_dev_supra = round(100* pat_dev_supra/(pat_dev_supra+pat_nondev_supra),2))
+  
+  test_control_infra  <- Z$perc_dev_infra[1]
+  test_patient_infra  <- Z$perc_dev_infra[2]
+  train_control_infra <- Z$perc_dev_infra[3]
+  
+  test_control_supra  <- Z$perc_dev_supra[1]
+  test_patient_supra  <- Z$perc_dev_supra[2]
+  train_control_supra <- Z$perc_dev_supra[3]
+      
+  cat("+ Timepoint", tp,": Infra-normal deviations for at least one region were evident in:\n ",
+        paste0(test_patient_infra,"% of patients, whereas this was the case for"), 
+        paste0(train_control_infra,"% (train) and ",test_control_infra,"% (test) \n of healthy controls."),"\n")
+  
+    cat("+ Timepoint", tp,": Supra-normal deviations for at least one region were evident in:\n ",
+        paste0(test_patient_supra,"% of patients, whereas this was the case for"), 
+        paste0(train_control_supra,"% (train) and ",test_control_supra,"% (test) \n of healthy controls."),"\n")
+}
+```
+
+
+**68 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_NOmatch_68
+for (tp in 1:3){ # for each timepoint
+  Z <- df %>%
+    dplyr::filter(timepoint==tp)    %>%
+    dplyr::mutate(deviant_infra = ifelse(z < -1.96, 1, 0))%>% # Infra-normal
+    dplyr::mutate(deviant_supra = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
+    #dplyr::group_by(subID) %>%
+    dplyr::group_by(subID, group) %>%
+    dplyr::summarise(nreg_dev_infra = sum(deviant_infra==1),  # At least one region deviated
+                     nreg_dev_supra = sum(deviant_supra==1)) %>%
+    dplyr::mutate(deviant_infra = ifelse(nreg_dev_infra>0, 1, 0),# At least one region deviated
+                  deviant_supra = ifelse(nreg_dev_supra>0, 1, 0)) %>%
+    dplyr::group_by(group) %>%
+    dplyr::summarise(pat_dev_infra = sum(deviant_infra==1),
+              pat_nondev_infra = sum(deviant_infra==0),
+              pat_dev_supra    = sum(deviant_supra==1),
+              pat_nondev_supra = sum(deviant_supra==0)) %>%
+    dplyr::mutate(perc_dev_infra = round(100* pat_dev_infra/(pat_dev_infra+pat_nondev_infra),2),
+                  perc_dev_supra = round(100* pat_dev_supra/(pat_dev_supra+pat_nondev_supra),2))
+  
+  test_control_infra  <- Z$perc_dev_infra[1]
+  test_patient_infra  <- Z$perc_dev_infra[2]
+  train_control_infra <- Z$perc_dev_infra[3]
+  
+  test_control_supra  <- Z$perc_dev_supra[1]
+  test_patient_supra  <- Z$perc_dev_supra[2]
+  train_control_supra <- Z$perc_dev_supra[3]
+      
+  cat("+ Timepoint", tp,": Infra-normal deviations for at least one region were evident in:\n ",
+        paste0(test_patient_infra,"% of patients, whereas this was the case for"), 
+        paste0(train_control_infra,"% (train) and ",test_control_infra,"% (test) \n of healthy controls."),"\n")
+  
+    cat("+ Timepoint", tp,": Supra-normal deviations for at least one region were evident in:\n ",
+        paste0(test_patient_supra,"% of patients, whereas this was the case for"), 
+        paste0(train_control_supra,"% (train) and ",test_control_supra,"% (test) \n of healthy controls."),"\n")
+}
+```
+
+**308 REGIONS (Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+# For 4 and 5
+df <- Zs_match_308
+for (tp in 1:3){ # for each timepoint
+  Z <- df %>%
+    dplyr::filter(timepoint==tp)    %>%
+    dplyr::mutate(deviant_infra = ifelse(z < -1.96, 1, 0))%>% # Infra-normal
+    dplyr::mutate(deviant_supra = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
+    #dplyr::group_by(subID) %>%
+    dplyr::group_by(subID, group) %>%
+    dplyr::summarise(nreg_dev_infra = sum(deviant_infra==1),  # At least one region deviated
+                     nreg_dev_supra = sum(deviant_supra==1)) %>%
+    dplyr::mutate(deviant_infra = ifelse(nreg_dev_infra>0, 1, 0),# At least one region deviated
+                  deviant_supra = ifelse(nreg_dev_supra>0, 1, 0)) %>%
+    dplyr::group_by(group) %>%
+    dplyr::summarise(pat_dev_infra = sum(deviant_infra==1),
+              pat_nondev_infra = sum(deviant_infra==0),
+              pat_dev_supra    = sum(deviant_supra==1),
+              pat_nondev_supra = sum(deviant_supra==0)) %>%
+    dplyr::mutate(perc_dev_infra = round(100* pat_dev_infra/(pat_dev_infra+pat_nondev_infra),2),
+                  perc_dev_supra = round(100* pat_dev_supra/(pat_dev_supra+pat_nondev_supra),2))
+  
+  test_control_infra  <- Z$perc_dev_infra[1]
+  test_patient_infra  <- Z$perc_dev_infra[2]
+  train_control_infra <- Z$perc_dev_infra[3]
+  
+  test_control_supra  <- Z$perc_dev_supra[1]
+  test_patient_supra  <- Z$perc_dev_supra[2]
+  train_control_supra <- Z$perc_dev_supra[3]
+      
+  cat("+ Timepoint", tp,": Infra-normal deviations for at least one region were evident in:\n ",
+        paste0(test_patient_infra,"% of patients, whereas this was the case for"), 
+        paste0(train_control_infra,"% (train) and ",test_control_infra,"% (test) \n of healthy controls."),"\n")
+  
+    cat("+ Timepoint", tp,": Supra-normal deviations for at least one region were evident in:\n ",
+        paste0(test_patient_supra,"% of patients, whereas this was the case for"), 
+        paste0(train_control_supra,"% (train) and ",test_control_supra,"% (test) \n of healthy controls."),"\n")
+}
+```
+
+
+**308 REGIONS (NO Match-it)**
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, comment=NA}
+df <- Zs_NOmatch_308
+for (tp in 1:3){ # for each timepoint
+  Z <- df %>%
+    dplyr::filter(timepoint==tp)    %>%
+    dplyr::mutate(deviant_infra = ifelse(z < -1.96, 1, 0))%>% # Infra-normal
+    dplyr::mutate(deviant_supra = ifelse(z > 1.96, 1, 0)) %>% # Supra-normal
+    #dplyr::group_by(subID) %>%
+    dplyr::group_by(subID, group) %>%
+    dplyr::summarise(nreg_dev_infra = sum(deviant_infra==1),  # At least one region deviated
+                     nreg_dev_supra = sum(deviant_supra==1)) %>%
+    dplyr::mutate(deviant_infra = ifelse(nreg_dev_infra>0, 1, 0),# At least one region deviated
+                  deviant_supra = ifelse(nreg_dev_supra>0, 1, 0)) %>%
+    dplyr::group_by(group) %>%
+    dplyr::summarise(pat_dev_infra = sum(deviant_infra==1),
+              pat_nondev_infra = sum(deviant_infra==0),
+              pat_dev_supra    = sum(deviant_supra==1),
+              pat_nondev_supra = sum(deviant_supra==0)) %>%
+    dplyr::mutate(perc_dev_infra = round(100* pat_dev_infra/(pat_dev_infra+pat_nondev_infra),2),
+                  perc_dev_supra = round(100* pat_dev_supra/(pat_dev_supra+pat_nondev_supra),2))
+  
+  test_control_infra  <- Z$perc_dev_infra[1]
+  test_patient_infra  <- Z$perc_dev_infra[2]
+  train_control_infra <- Z$perc_dev_infra[3]
+  
+  test_control_supra  <- Z$perc_dev_supra[1]
+  test_patient_supra  <- Z$perc_dev_supra[2]
+  train_control_supra <- Z$perc_dev_supra[3]
+      
+  cat("+ Timepoint", tp,": Infra-normal deviations for at least one region were evident in:\n ",
+        paste0(test_patient_infra,"% of patients, whereas this was the case for"), 
+        paste0(train_control_infra,"% (train) and ",test_control_infra,"% (test) \n of healthy controls."),"\n")
+  
+    cat("+ Timepoint", tp,": Supra-normal deviations for at least one region were evident in:\n ",
+        paste0(test_patient_supra,"% of patients, whereas this was the case for"), 
+        paste0(train_control_supra,"% (train) and ",test_control_supra,"% (test) \n of healthy controls."),"\n")
+}
+```
+
+
+
+***
+
+### Percentage of deviant subjects for number of regions
+
+**Figura B del paper de Bethlehem.**
+En el eje de las x se representa el porcentaje de sujetos y en el eje y el número de regiones con el mismo ratio $\frac{|Z|>1.96}{|Z|<1.96}$. Se calcula para cada timepoint ($timepoint=1,2,3$).
+
+```{r warning=F, message = F}
+getStatistics(Zs= Zs_match_68,  lab= "lC_match_parc68", parc= "parc68")
+getStatistics(Zs= Zs_NOmatch_68, lab= "lC_NOmatch_parc68", parc= "parc68")
+
+getStatistics(Zs= Zs_match_308,  lab= "lC_match_parc308", parc= "parc308")
+getStatistics(Zs= Zs_NOmatch_308, lab= "lC_NOmatch_parc308", parc= "parc308")
+```
+
+Show the results from the global ratios obtained:
+
+## Match-it dataframe (longCombat):
+
+```{r echo=FALSE}
+tp1_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/prevalence_wscores_1_lC_match_parc68.png")), interpolate = FALSE)
+tp2_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/prevalence_wscores_2_lC_match_parc68.png")), interpolate = FALSE)
+tp3_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/prevalence_wscores_3_lC_match_parc68.png")), interpolate = FALSE)
+
+tp1_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/prevalence_wscores_1_lC_match_parc308.png")), interpolate = FALSE)
+tp2_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/prevalence_wscores_2_lC_match_parc308.png")), interpolate = FALSE)
+tp3_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/prevalence_wscores_3_lC_match_parc308.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(tp1_68, tp2_68, tp3_68, top="68 regions parcellation"), 
+             arrangeGrob(tp1_308, tp2_308, tp3_308, top="308 regions parcellation"), 
+             ncol=2)
+```
+
+## NO Match-it dataframe (longCombat):
+
+```{r show-png-prev_NOmatch, echo=FALSE}
+tp1_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/prevalence_wscores_1_lC_NOmatch_parc68.png")), interpolate = FALSE)
+tp2_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/prevalence_wscores_2_lC_NOmatch_parc68.png")), interpolate = FALSE)
+tp3_68 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc68/prevalence_wscores_3_lC_NOmatch_parc68.png")), interpolate = FALSE)
+
+tp1_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/prevalence_wscores_1_lC_NOmatch_parc308.png")), interpolate = FALSE)
+tp2_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/prevalence_wscores_2_lC_NOmatch_parc308.png")), interpolate = FALSE)
+tp3_308 <- grid::rasterGrob(as.raster(readPNG("/data_J/Results/Plots/parc308/prevalence_wscores_3_lC_NOmatch_parc308.png")), interpolate = FALSE)
+
+grid.arrange(arrangeGrob(tp1_68, tp2_68, tp3_68, top="68 regions parcellation"), 
+             arrangeGrob(tp1_308, tp2_308, tp3_308, top="308 regions parcellation"), 
+             ncol=2)
+```

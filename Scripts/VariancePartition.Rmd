@@ -1,0 +1,89 @@
+---
+  title: "Variance Partition"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+html_document: default
+---
+  
+```{r, warning=F, message = F, echo = FALSE}
+#install.packages("easypackages")
+library("easypackages")
+
+
+list.of.packages <- c("viridis", "tidyverse", "MatchIt", "grid", "png", 
+                      "gridExtra", "parallel", "nlme", "JMbayes", "plyr",
+                      "BiocManager", "Biostrings", "lme4", "ggplot2", "dplyr",
+                      "Hmisc", "devtools", "longCombat", "neuroCombat", 
+                      "tinytex", "knitr", "ggExtra", "variancePartition",
+                      "Rmisc", "doParallel", "hrbrthemes", "cowplot", 
+                      "BiocParallel", "effectsize", "ggpubr", "stats")
+
+
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+if(length(new.packages)>0) { install.packages(new.packages)}
+
+libraries(list.of.packages)
+rm(list.of.packages, new.packages)
+```
+
+
+```{r, warning=F, message = F, echo = FALSE}
+setwd("/data_J/Scripts")
+source("1_DataPreparation.R")
+source("4_EDA.R")
+```
+
+
+```{r include=FALSE, results=}
+df_68 <- getData("68")
+df_308 <- getData("308")
+measure <- "CT"
+```
+
+
+```{r include=FALSE, results=}
+### 68 REG PARC, NO MATCH IT
+df_68_Combat <- DataPreprocessing(df = df_68,
+                                  parc = "68",
+                                  measure = measure,
+                                  harmonization = T,
+                                  match = F)
+
+### 308 REG PARC, NO MATCH IT
+df_308_Combat <- DataPreprocessing(df = df_308,
+                                   parc = "308",
+                                   measure = measure,
+                                   harmonization = T,
+                                   match = F)
+
+### 68 REG PARC, MATCH IT
+df_68_Combat_Match <- DataPreprocessing(df = df_68,
+                                        parc = "68",
+                                        measure = measure,
+                                        harmonization = T,
+                                        match = T)
+
+### 308 REG PARC, MATCH IT
+df_308_Combat_Match <- DataPreprocessing(df = df_308,
+                                         parc = "308",
+                                         measure = measure,
+                                         harmonization = T,
+                                         match = T)
+```
+
+```{r}
+rm(list=setdiff(ls(), c("df_68_Combat_Match", "measure", "variancePartition_lme")))
+```
+
+```{r}
+variancePartition_lme(df = df_68_Combat_Match,
+                  measure = measure,
+                  lab = "df_68_Combat_lme",
+                  par = "parc68")
+```
+
+
