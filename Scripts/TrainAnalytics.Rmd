@@ -1,0 +1,3458 @@
+---
+title: "Normative modeling in Schizophrenia - Mod 1 Hugo meeting"
+author: "Noemi González Lois"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r, warning=F, message = F, echo = FALSE}
+#install.packages("easypackages")
+library("easypackages")
+
+list.of.packages <- c("viridis", "tidyverse", "MatchIt", "grid", "png", 
+                      "gridExtra", "parallel", "nlme", "JMbayes", "plyr",
+                      "BiocManager", "Biostrings", "lme4", "ggplot2", "dplyr",
+                      "Hmisc", "devtools", "longCombat", "neuroCombat", 
+                      "tinytex", "knitr", "ggExtra", "variancePartition",
+                      "Rmisc", "doParallel", "hrbrthemes", "cowplot", 
+                      "BiocParallel", "effectsize", "ggpubr", "caret", "scorer",
+                      "tidyr")
+
+new.packages <- list.of.packages[!(list.of.packages %in%
+                                     installed.packages()[,"Package"])]
+  if(length(new.packages)>0) { install.packages(new.packages)}
+
+libraries(list.of.packages)
+ncores <- detectCores()
+rm(list.of.packages, new.packages)
+```
+
+
+```{r, eval = F, include = FALSE}
+tinytex::install_tinytex()
+install_github("jcbeer/longCombat")
+install_github("jfortin1/neuroCombatData")
+install_github("jfortin1/neuroCombat_Rpackage")
+BiocManager::install("BiocParallel")
+BiocManager::install("Biostrings")
+BiocManager::install("variancePartition")
+install_version("dplyr", version = "1.0.5", repos = "http://cran.us.r-project.org")
+tinytex::install_tinytex()
+devtools::install_github("paulhendricks/scorer")
+```
+
+```{r setup I, echo=F}
+knitr::opts_chunk$set(
+  include = TRUE,  
+  echo=TRUE, 
+  eval=TRUE, 
+  warning=TRUE, 
+  message = TRUE,
+  cache = TRUE,
+  fig.width = 12,
+  fig.height = 8,
+  error = TRUE)
+```
+
+
+```{r, warning=F, message = F, echo = FALSE}
+setwd("/data_J/Scripts")
+source("1_DataPreparation.R")
+```
+
+# Linear Mixed Effects Model Regresion
+
+```{r}
+model_train_cv <- function(i, df, measure){
+  
+  # We select current region "i" and the relevant covariates:
+  var_names  <- c("age", "scode", "dcode", "euler", "subID", "timepoint")
+  reg_names  <- colnames(df%>%dplyr::select(ends_with(measure)))
+  df <- df[ , c(reg_names[i], var_names) ]
+  
+  # We rename the current region "i" as "reg":
+  colnames(df)[colnames(df)==reg_names[i]] <- "reg"
+
+  # We separate data from healthy controls and patients:
+  df_hc  <- df[df[,"dcode"]==0, ] 
+  df_pat <- df[df[,"dcode"]==1, ] 
+
+  # We get the unique identifiers from the healthy controls as well as from the patients:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+
+  # we create 10 folds with the healthy controls IDs:
+  num_folds <- 10
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+
+  # and we create as well 10 folds with the patients IDs:
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # Empty structure to store the predictions:
+  predictions <- NULL
+
+  # For each fold we do:
+  for(f in 1:num_folds){
+    
+    # We get the train and test IDs corresponding to this fold
+    train_ids <- ids_hc[folds_hc[[f]]]
+    test_ids  <- ids_hc[-folds_hc[[f]]]
+    
+    # With those, we generate the fold partitions with the brain measurement and covariates
+    train <- subset(df_hc, subID%in%train_ids) # Train set for this fold
+    test  <- subset(df_hc, subID%in%test_ids)  # Validation set for this fold
+    
+    # Fit of the longitudinal Linear Mixed Effects model
+    CT_lme <- lme(as.formula("reg ~ scode + age + euler"),
+               random = ~ 1 + age|subID,
+               data   = train,
+               control= lmeControl(opt = 'optim', 
+                                   msMaxIter = 4000,
+                                   method = 'REML',
+                                   maxIter = 500))
+
+  # Predictions for each control in the validation set of this fold:
+  for(participant in test_ids){
+    prediction_subset <- subset(test, subID==participant)
+    # Dynamic predictions at the subject level:
+    y_preds <- IndvPred_lme(CT_lme, newdata = prediction_subset,
+                            all_times = T, timeVar = "age", M = 500,
+                            return_data = T)
+    # True value for current region i of this control
+    y_trues <- prediction_subset[['reg']]
+    
+    # Save the prediction for each timepoint:
+    n_tp <- nrow(prediction_subset)
+    for (tp in 1:n_tp){
+      y_true <- as.numeric(y_trues[tp])
+      age_tp <- prediction_subset[,"age"][tp]
+      y_pred <- y_preds[y_preds[,"age"]==age_tp, "pred"]
+      predictions <- rbind(predictions, data.frame("fold" = f,
+                                                 "region" = reg_names[i],
+                                                 "sigma"  = CT_lme$sigma,
+                                                 "subID"  = participant,
+                                                 "diagnose"  = "control",
+                                                 "timepoint" = tp,
+                                                 "y_true" = y_true,
+                                                 "y_pred" = y_pred))
+    }
+   }
+  
+  ##### PATIENTS #####
+  
+  # We get the 10% patients IDs corresponding to this fold (test with 10% patients)
+  fold_ids  <- ids_pat[-folds_pat[[f]]]
+
+  # With those, we generate a test subset with a 10% patients
+  pats <- subset(df_pat, subID%in%fold_ids)
+
+  # We make predictions for each patient with the LME model of this fold:
+  for(participant in fold_ids){
+    prediction_subset <- subset(pats, subID==participant)
+    
+    # Dynamic predictions at the subject level:
+    y_preds <- IndvPred_lme(CT_lme, newdata = prediction_subset,
+                            all_times = T, timeVar = "age", M = 500,
+                            return_data = T)
+
+    # True value for current region i of this patient
+    y_trues <- prediction_subset[['reg']]
+    
+    # Save the prediction for each timepoint:
+    n_tp <- nrow(prediction_subset)
+    for (tp in 1:n_tp){
+      y_true <- as.numeric(y_trues[tp])
+      age_tp <- prediction_subset[,"age"][tp]
+      y_pred <- y_preds[y_preds[,"age"]==age_tp, "pred"]
+      predictions <- rbind(predictions, data.frame("fold" = f,
+                                                 "region" = reg_names[i],
+                                                 "sigma"  = CT_lme$sigma,
+                                                 "subID"  = participant,
+                                                 "diagnose"  = "patient",
+                                                 "timepoint" = tp,
+                                                 "y_true" = y_true,
+                                                 "y_pred" = y_pred))
+     }
+    }
+  }
+return(predictions)
+}
+```
+
+```{r include=FALSE}
+df_68  <- getData("68")
+df_308 <- getData("308")
+```
+
+
+```{r eval = F, include=FALSE}
+################# NO MATCH IT ###################################
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      measure = "CT",
+                      harmonization = T,
+                      match = F)
+measure <- "CT"
+n <- length(colnames(df%>%dplyr::select(ends_with(measure))))
+predictions_68NoM <- do.call(rbind, mclapply(1:n, model_train_cv,
+                                 df, measure,
+                                 mc.cores = ncores-1))
+write.csv(predictions_68NoM,"/data_J/Results/Files/predictions_HM1_68NoM.csv", row.names = FALSE)
+```
+
+```{r eval = F, include=FALSE}
+################# NO MATCH IT ###################################
+df <- DataPreparation(df = df_308,
+                      parc = "308",
+                      harmonization = T,
+                      match = F)
+measure <- "_thickness"
+n <- length(colnames(df%>%dplyr::select(ends_with(measure))))
+predictions_308NoM <- do.call(rbind, mclapply(1:n, model_train_cv,
+                                 df, measure,
+                                 mc.cores = ncores-1))
+write.csv(predictions_308NoM,"/data_J/Results/Files/predictions_HM1_308NoM.csv", row.names = FALSE)
+```
+
+```{r eval = F, include=FALSE}
+#################### MATCH IT ###################################
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      harmonization = T,
+                      match = T)
+measure <- "CT_freesurfer"
+n <- length(colnames(df%>%dplyr::select(ends_with(measure))))
+predictions_68M <- do.call(rbind, mclapply(1:n, model_train_cv,
+                                           df, measure,
+                                           mc.cores = ncores-1))
+write.csv(predictions_68M,   "/data_J/Results/Files/predictions_HM1_68M.csv",    row.names = FALSE)
+```
+
+```{r eval = F, include=FALSE}
+#################### MATCH IT ###################################
+df <- DataPreparation(df = df_308,
+                      parc = "308",
+                      harmonization = T,
+                      match = T)
+measure <- "_thickness"
+n <- length(colnames(df%>%dplyr::select(ends_with(measure))))
+predictions_308M <- do.call(rbind, mclapply(1:n, model_train_cv,
+                                 df, measure,
+                                 mc.cores = ncores-1))
+write.csv(predictions_308M,  "/data_J/Results/Files/predictions_HM1_308M.csv",   row.names = FALSE)
+```
+
+```{r echo = FALSE}
+predictions_68NoM  <- read.csv("/data_J/Results/Files/predictions_HM1_68NoM.csv" )
+predictions_308NoM <- read.csv("/data_J/Results/Files/predictions_HM1_308NoM.csv")
+predictions_68M    <- read.csv("/data_J/Results/Files/predictions_HM1_68M.csv"   )
+predictions_308M   <- read.csv("/data_J/Results/Files/predictions_HM1_308M.csv"  )
+```
+
+```{r include=FALSE}
+rm(df_308, df_68, ncores, model_train_cv)
+```
+
+
+# PERFORMANCE METRICS ANALYSIS
+
+## WITHOUT TAKING INTO ACCOUNT THE FOLDS:
+
+
+```{r include=FALSE}
+extract_metrics <- function(df) {
+  
+  regs  <- unique(df$region)
+  
+  # We create an empty column to store the z-scores
+  df["Z-score"] <- 0
+  
+  # and an empty structure to store the metrics
+  metrics_df <- NULL
+  
+  for (reg in regs){
+    # aux is the auxiliar variable that contains
+    # the data corresponding to region "reg"
+    aux <- df
+    aux <- aux[aux[ ,"region"]==reg, ]
+    
+    # Z-SCORE
+    # (true - pred)/sigma
+    Z <- (aux$y_true - aux$y_pred)/aux$sigma
+    df[df[,"region"]==reg,"Z-score"] <- Z
+    
+    # aux is the auxiliar variable that contains
+    # the data corresponding to region "reg"
+    aux <- df
+    aux <- aux[aux[ ,"region"]==reg, ]
+    
+    # T-TEST
+    # We get the previously calculated z-scores corresponding to controls and patients
+    z_hc  <- aux[aux[, "diagnose"]== "control", "Z-score"]
+    z_pat <- aux[aux[, "diagnose"]== "patient", "Z-score"]
+    
+    # So we have one t-test value for each region 
+    # (actually there are 10 t-test values because 
+    # there are 10 folds so 10 times each region)
+    pval.ttest <- t.test(x = z_pat, y = z_hc, alternative = "two.sided",
+                         mu = 0, var.equal = TRUE, conf.level  = 0.95)$p.value
+
+    ### CONTROLS
+    # We get the model predictions and the true values from the control data
+    pred_hc  <- aux[aux[, "diagnose"]== "control","y_pred"]
+    true_hc  <- aux[aux[, "diagnose"]== "control","y_true"]
+  
+    # CORRELATION COEFFICIENT
+    # "pearson" (default), "kendall", or "spearman"
+    corr.coef <- cor(pred_hc, true_hc)
+    
+    # Mean Absolute Error (MAE)
+    MAE <- mean_absolute_error(pred_hc, true_hc)
+    
+    # Mean Squared Error (MSE)
+    MSE <- mean_squared_error(pred_hc, true_hc)
+  
+    # Standardized Mean Absolute Error (SMAE)
+    # It is the MAE divided by the deviation of the target values
+    # The less is the better.
+    SMAE <- MAE/sd(true_hc) # sd() gives the same result as --> sqrt(var(true_hc))
+    
+    # Standardized Mean Squared Error (SMSE)
+    # It is the MSE divided by the variance of the target values
+    # The less is the better. SMSE < 1 show that we learn something meaningful
+    SMSE <- MSE/var(true_hc)
+    
+    # Coefficient of determination (R2) (same as EV)
+    rss <- sum((pred_hc - true_hc) ^ 2)       # Residual Sum of Squares
+    tss <- sum((true_hc - mean(true_hc)) ^ 2) # Total Sum of Squares
+    r2  <- 1 - rss/tss
+  
+    metrics_df <- rbind(metrics_df, data.frame("region" = reg,
+                                         "diagnose"  = "control",
+                                         "corr" = round(corr.coef,5),
+                                         "MAE"  = round(MAE,5),
+                                         "MSE"  = round(MSE,5),
+                                         "SMAE" = round(SMAE,5),
+                                         "SMSE" = round(SMSE,5),
+                                         "R2"   = round(r2,5),
+                                         "pval t-test" = round(pval.ttest,5)))
+    
+      ### PATIENTS
+      # We get the model predictions and the true values from the patients data
+      pred_pat  <- aux[aux[, "diagnose"]== "patient","y_pred"]
+      true_pat  <- aux[aux[, "diagnose"]== "patient","y_true"]
+    
+      # CORRELATION COEFFICIENT
+      # "pearson" (default), "kendall", or "spearman"
+      corr.coef <- cor(pred_pat, true_pat)
+      
+      # Mean Absolute Error (MAE)
+      MAE <- mean_absolute_error(pred_pat, true_pat)
+      # Mean Squared Error (MSE)
+      MSE <- mean_squared_error(pred_pat, true_pat)
+    
+      # Standardized Mean Squared Error (SMSE)
+      # It is the MSE divided by the variance of the target values
+      # The less is the better. SMSE < 1 show that we learn something meaningful
+      SMSE <- MSE/var(true_pat)
+      # Standardized Mean Absolute Error (SMAE)
+      # It is the MAE divided by the deviation of the target values
+      # The less is the better. SMSE < 1 show that we learn something meaningful
+      SMAE <- MAE/sd(true_pat) # sd() gives the same result as --> sqrt(var(true_pat))
+    
+      # Coefficient of determination (R2) (same as EV)
+      rss <- sum((pred_pat - true_pat) ^ 2)       # Residual Sum of Squares
+      tss <- sum((true_pat - mean(true_pat)) ^ 2) # Total Sum of Squares
+      r2  <- 1 - rss/tss
+    
+      metrics_df <- rbind(metrics_df, data.frame("region" = reg,
+                                           "diagnose"  = "patient",
+                                           "corr" = round(corr.coef,5),
+                                           "MAE"  = round(MAE,5),
+                                           "MSE"  = round(MSE,5),
+                                           "SMAE" = round(SMAE,5),
+                                           "SMSE" = round(SMSE,5),
+                                           "R2"   = round(r2,5),
+                                           "pval t-test" = round(pval.ttest,5)))
+  }
+
+# # FDR correction for the t-test p-values
+# even <- metrics_df[ !c(TRUE,FALSE), "pval.t.test"]  # Even rows (par)
+# odd  <- metrics_df[ c(TRUE,FALSE), "pval.t.test"]   # Odd rows (impar)
+# 
+# even.FDR <- p.adjust(even, method = "fdr")  # Even rows (par)
+# odd.FDR  <- p.adjust(odd,  method = "fdr")  # Odd rows (impar)
+# 
+# metrics_df[ !c(TRUE,FALSE), "pval.t.test.FDR"] <- even.FDR
+# metrics_df[ c(TRUE,FALSE), "pval.t.test.FDR"]  <- odd.FDR
+
+return(list("df" = df, 
+            "performance" = metrics_df))
+}
+```
+
+
+```{r eval=F, echo = FALSE}
+metrics_68NoM <- extract_metrics(predictions_68NoM)
+predictions_68NoM <- metrics_68NoM$df
+performance_68NoM <- metrics_68NoM$performance
+
+metrics_308NoM <- extract_metrics(predictions_308NoM)
+predictions_308NoM <- metrics_308NoM$df
+performance_308NoM <- metrics_308NoM$performance
+
+metrics_68M <- extract_metrics(predictions_68M)
+predictions_68M <- metrics_68M$df
+performance_68M <- metrics_68M$performance
+
+metrics_308M <- extract_metrics(predictions_308M)
+predictions_308M <- metrics_308M$df
+performance_308M <- metrics_308M$performance
+
+write.csv(performance_68M, "/data_J/Results/Files/performance_68M.csv", row.names = FALSE)
+write.csv(performance_308M, "/data_J/Results/Files/performance_308M.csv", row.names = FALSE)
+write.csv(performance_68NoM, "/data_J/Results/Files/performance_68NoM.csv", row.names = FALSE)
+write.csv(performance_308NoM, "/data_J/Results/Files/performance_308NoM.csv", row.names = FALSE)
+
+write.csv(predictions_68M, "/data_J/Results/Files/predictions_68M.csv", row.names = FALSE)
+write.csv(predictions_308M, "/data_J/Results/Files/predictions_308M.csv", row.names = FALSE)
+write.csv(predictions_68NoM, "/data_J/Results/Files/predictions_68NoM.csv", row.names = FALSE)
+write.csv(predictions_308NoM, "/data_J/Results/Files/predictions_308NoM.csv", row.names = FALSE)
+
+rm(metrics_68NoM, metrics_68M, metrics_308M, metrics_308NoM, extract_metrics, 
+   performance_68M, performance_308M, performance_68NoM, performance_308NoM, 
+   predictions_68M, predictions_308M, predictions_68NoM, predictions_308NoM)
+```
+
+```{r echo = FALSE}
+performance_68NoM  <- read.csv("/data_J/Results/Files/performance_68NoM.csv" )
+performance_308NoM <- read.csv("/data_J/Results/Files/performance_308NoM.csv")
+performance_68M    <- read.csv("/data_J/Results/Files/performance_68M.csv"   )
+performance_308M   <- read.csv("/data_J/Results/Files/performance_308M.csv"  )
+```
+
+```{r echo = FALSE}
+predictions_68NoM  <- read.csv("/data_J/Results/Files/predictions_68NoM.csv" )
+predictions_308NoM <- read.csv("/data_J/Results/Files/predictions_308NoM.csv")
+predictions_68M    <- read.csv("/data_J/Results/Files/predictions_68M.csv"   )
+predictions_308M   <- read.csv("/data_J/Results/Files/predictions_308M.csv"  )
+```
+
+```{r include=FALSE}
+# Combine all the performance metrics into one dataset:
+performance_68NoM$Group  <-"68NoM"
+performance_68M$Group    <-"68M"
+performance_308NoM$Group <-"308NoM"
+performance_308M$Group   <-"308M"
+
+performance <- rbind(performance_68NoM, performance_68M,
+                     performance_308NoM,performance_308M)
+
+hc.performance  <- subset(performance, diagnose=="control")
+pat.performance <- subset(performance, diagnose=="patient")
+```
+
+
+```{r include=FALSE}
+#### MEAN and SD ####
+hc.performance_mean_sd <- hc.performance %>%
+    dplyr::group_by(Group) %>%
+    dplyr::summarise(
+         # SD
+         MAE.sd = sd(MAE),
+         MSE.sd = sd(MSE),
+         SMAE.sd= sd(SMAE),
+         SMSE.sd= sd(SMSE),
+         corr.sd= sd(corr),
+         R2.sd  = sd(R2),
+         # MEAN
+         MAE = mean(MAE),
+         MSE = mean(MSE),
+         SMAE= mean(SMAE),
+         SMSE= mean(SMSE),
+         corr= mean(corr),
+         R2  = mean(R2))
+
+pat.performance_mean_sd <- pat.performance %>%
+    dplyr::group_by(Group) %>%
+    dplyr::summarise(
+         # SD
+         MAE.sd = sd(MAE),
+         MSE.sd = sd(MSE),
+         SMAE.sd= sd(SMAE),
+         SMSE.sd= sd(SMSE),
+         corr.sd= sd(corr),
+         R2.sd  = sd(R2),
+         # MEAN
+         MAE = mean(MAE),
+         MSE = mean(MSE),
+         SMAE= mean(SMAE),
+         SMSE= mean(SMSE),
+         corr= mean(corr),
+         R2  = mean(R2))
+```
+
+# BOXPLOT
+
+```{r include=FALSE}
+plot_performance <- function(df, ylim.corr, ylim.mae, ylim.mse, 
+                             ylim.smse, ylim.smae, ylim.r2) {
+  
+  plot1 <- ggplot(df, aes_string(x="Group", y="corr",
+                                         group= "Group", color="Group")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  ylim(ylim.corr) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+
+  
+  plot2 <- ggplot(df, aes_string(x="Group", y="MAE",
+                                         group= "Group", color="Group")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  ylim(ylim.mae) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+  
+  plot3 <- ggplot(df, aes_string(x="Group", y="MSE",
+                                         group= "Group", color="Group")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  ylim(ylim.mse) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+
+  plot4 <- ggplot(df, aes_string(x="Group", y="SMSE",
+                                         group= "Group", color="Group")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  ylim(ylim.smse) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+  
+  
+  plot5 <- ggplot(df, aes_string(x="Group", y="SMAE",
+                                         group= "Group", color="Group")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  ylim(ylim.smae) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+  
+  
+  plot6 <- ggplot(df, aes_string(x="Group", y="R2",
+                                         group= "Group", color="Group")) +
+  geom_boxplot(outlier.alpha = 0.1) +
+  ylim(ylim.r2) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+  
+  prow <- plot_grid(
+    plot1 + theme(legend.position="none"),
+    plot6 + theme(legend.position="none"),
+    plot2 + theme(legend.position="none"),
+    plot3 + theme(legend.position="none"),
+    plot5 + theme(legend.position="none"),
+    plot4 + theme(legend.position="none"),
+    align = 'vh',
+    labels = c(" ", " ", " ", " ", " ", " "),
+    hjust = -1,
+    nrow = 3)
+
+# extract a legend that is laid out horizontally
+legend_b <- get_legend(
+  plot1 +
+    guides(color = guide_legend(nrow = 1)) +
+    theme(legend.position = "bottom")
+)
+plot_grid(prow, legend_b, ncol = 1, rel_heights = c(1, .1))
+
+}
+```
+
+
+```{r eval=T, include=FALSE}
+########### Limits of the color gradients of the graphics #############
+# CORR
+ylim.corr <- c(min(performance$corr), max(performance$corr))
+
+# MAE
+ylim.mae <- c(min(performance$MAE), max(performance$MAE))
+
+# MSE
+ylim.mse <- c(min(performance$MSE), max(performance$MSE))
+
+# SMSE
+ylim.smse <- c(min(performance$SMSE), max(performance$SMSE))
+
+# SMAE
+ylim.smae <- c(min(performance$SMAE),max(performance$SMAE))
+
+# R2
+ylim.r2 <- c(min(performance$R2),max(performance$R2))
+
+rm(performance)
+```
+
+## HEALTHY CONTROLS
+
+```{r echo=FALSE, fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+plot_performance(hc.performance, ylim.corr, ylim.mae, ylim.mse, 
+                 ylim.smse, ylim.smae, ylim.r2)
+```
+
+## PATIENTS
+
+
+```{r echo=FALSE, fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+plot_performance(pat.performance, ylim.corr, ylim.mae, ylim.mse, 
+                 ylim.smse, ylim.smae, ylim.r2)
+```
+
+```{r include=FALSE}
+rm(ylim.corr, ylim.mae, ylim.mse, ylim.smse, ylim.smae, ylim.r2, 
+   plot_performance, hc.performance, pat.performance, performance_308M, 
+   performance_308NoM, performance_68M, performance_68NoM, extract_metrics)
+```
+
+
+# SCATTERPLOT + ERROR BAND
+
+```{r include=FALSE}
+plot_performance_mean_sd <- function(df, ylim.corr, ylim.mae, ylim.mse, 
+                             ylim.smse, ylim.smae, ylim.r2) {
+  
+  plot1 <- ggplot(df, aes_string(x="Group", y="corr",
+                                         group= "Group", color="Group")) +
+  geom_point(aes(shape=Group, color=Group), size=4) +
+  ylim(ylim.corr) +
+  geom_errorbar(aes(ymin=corr-corr.sd, ymax=corr+corr.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_shape_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c(15, 16, 17, 18)) +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+  
+  plot2 <- ggplot(df, aes_string(x="Group", y="MAE",
+                                         group= "Group", color="Group")) +
+  geom_point(aes(shape=Group, color=Group), size=4) +
+  geom_errorbar(aes(ymin=MAE-MAE.sd, ymax=MAE+MAE.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  ylim(ylim.mae) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_shape_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c(15, 16, 17, 18)) +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+  
+  plot3 <- ggplot(df, aes_string(x="Group", y="MSE",
+                                         group= "Group", color="Group")) +
+  geom_point(aes(shape=Group, color=Group), size=4) +
+  geom_errorbar(aes(ymin=MSE-MSE.sd, ymax=MSE+MSE.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  ylim(ylim.mse) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_shape_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c(15, 16, 17, 18)) +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+
+  plot4 <- ggplot(df, aes_string(x="Group", y="SMSE",
+                                         group= "Group", color="Group")) +
+  geom_point(aes(shape=Group, color=Group), size=4) +
+  geom_errorbar(aes(ymin=SMSE-SMSE.sd, ymax=SMSE+SMSE.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  ylim(ylim.smse) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_shape_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c(15, 16, 17, 18)) +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+  
+  
+  plot5 <- ggplot(df, aes_string(x="Group", y="SMAE",
+                                         group= "Group", color="Group")) +
+  geom_point(aes(shape=Group, color=Group), size=4) +
+  geom_errorbar(aes(ymin=SMAE-SMAE.sd, ymax=SMAE+SMAE.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  ylim(ylim.smae) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_shape_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c(15, 16, 17, 18)) +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+  
+  
+  plot6 <- ggplot(df, aes_string(x="Group", y="R2",
+                                         group= "Group", color="Group")) +
+  geom_point(aes(shape=Group, color=Group), size=4) +
+  geom_errorbar(aes(ymin=R2-R2.sd, ymax=R2+R2.sd),
+                position = position_dodge(width=0.9), width=.2, color="black") +
+  ylim(ylim.r2) +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line    = element_line(colour = "black"),
+        plot.title   = element_text(size=15,face="bold"),
+        axis.text.x  = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y =  element_text(size = 15,face="bold"),
+        legend.title = element_text(size = 15,face="bold"),
+        legend.text = element_text(size  = 15),
+        legend.margin=margin(0, 0, 0, -10),
+        legend.position="bottom") +
+  scale_shape_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c(15, 16, 17, 18)) +
+  scale_color_manual(name = "Df",
+                     labels = c("308M", "308NoM", "68M", "68NoM"),
+                     values = c("red", "blue", "green", "#E7B800"))
+  
+  # PLOT ARRANGING
+  figure <- ggarrange(plot1, plot6, plot3, plot2, plot4, plot5, ncol = 2, nrow = 3, 
+                      common.legend = TRUE, legend="bottom")
+  figure
+
+}
+
+```
+
+```{r eval=T, include=FALSE}
+########### Limits of the graphics #############
+# CORR
+ylim.corr <- c(min(hc.performance_mean_sd$corr - hc.performance_mean_sd$corr.sd, 
+                   pat.performance_mean_sd$corr- pat.performance_mean_sd$corr.sd),
+               max(hc.performance_mean_sd$corr + hc.performance_mean_sd$corr.sd, 
+                   pat.performance_mean_sd$corr+ pat.performance_mean_sd$corr.sd))
+# MAE
+ylim.mae <- c(min(hc.performance_mean_sd$MAE - hc.performance_mean_sd$MAE.sd, 
+                   pat.performance_mean_sd$MAE- pat.performance_mean_sd$MAE.sd),
+               max(hc.performance_mean_sd$MAE + hc.performance_mean_sd$MAE.sd, 
+                   pat.performance_mean_sd$MAE+ pat.performance_mean_sd$MAE.sd))
+
+# MSE
+ylim.mse <- c(min(hc.performance_mean_sd$MSE - hc.performance_mean_sd$MSE.sd, 
+                   pat.performance_mean_sd$MSE- pat.performance_mean_sd$MSE.sd),
+               max(hc.performance_mean_sd$MSE + hc.performance_mean_sd$MSE.sd, 
+                   pat.performance_mean_sd$MSE+ pat.performance_mean_sd$MSE.sd))
+# SMSE
+ylim.smse <- c(min(hc.performance_mean_sd$SMSE - hc.performance_mean_sd$SMSE.sd, 
+                   pat.performance_mean_sd$SMSE- pat.performance_mean_sd$SMSE.sd),
+               max(hc.performance_mean_sd$SMSE + hc.performance_mean_sd$SMSE.sd, 
+                   pat.performance_mean_sd$SMSE+ pat.performance_mean_sd$SMSE.sd))
+# SMAE
+ylim.smae <- c(min(hc.performance_mean_sd$SMAE - hc.performance_mean_sd$SMAE.sd, 
+                   pat.performance_mean_sd$SMAE- pat.performance_mean_sd$SMAE.sd),
+               max(hc.performance_mean_sd$SMAE + hc.performance_mean_sd$SMAE.sd, 
+                   pat.performance_mean_sd$SMAE+ pat.performance_mean_sd$SMAE.sd))
+
+# R2
+ylim.r2 <- c(min(hc.performance_mean_sd$R2 - hc.performance_mean_sd$R2.sd, 
+                   pat.performance_mean_sd$R2- pat.performance_mean_sd$R2.sd),
+               max(hc.performance_mean_sd$R2 + hc.performance_mean_sd$R2.sd, 
+                   pat.performance_mean_sd$R2+ pat.performance_mean_sd$R2.sd))
+
+
+```
+
+## HEALTHY CONTROLS
+
+
+```{r echo=FALSE, fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+plot_performance_mean_sd(hc.performance_mean_sd, ylim.corr, ylim.mae, ylim.mse,
+                             ylim.smse, ylim.smae, ylim.r2)
+```
+
+
+
+
+## PATIENTS
+
+```{r echo=FALSE, fig.height=5, fig.width=5, message=FALSE, warning=FALSE}
+plot_performance_mean_sd(pat.performance_mean_sd, ylim.corr, ylim.mae, ylim.mse, 
+                             ylim.smse, ylim.smae, ylim.r2)
+```
+
+
+
+## TAKING INTO ACCOUNT THE FOLDS:
+
+```{r include=FALSE}
+extract_metrics_f <- function(df) {
+  
+  regs  <- unique(df$region)
+  
+  # We create an empty column to store the z-scores
+  df["Z-score"] <- 0
+  
+  # and an empty structure to store the metrics
+  metrics_df <- NULL
+  
+  for (reg in regs){
+    for (f in 1:10) {
+      # aux is the auxiliar variable that contains
+      # the data corresponding to fold "f" region "reg"
+      aux <- df
+      aux <- aux[aux[ ,"fold"  ]==f,   ]
+      aux <- aux[aux[ ,"region"]==reg, ]
+      
+      # Z-SCORE
+      # (true - pred)/sigma
+      Z <- (aux$y_true - aux$y_pred)/aux$sigma
+      df[df[,"region"]==reg,][df[df[,"region"]==reg,][,"fold"]==f,"Z-score"] <- Z
+
+      # aux is the auxiliar variable that contains
+      # the data corresponding to fold "f" region "reg"
+      aux <- df
+      aux <- aux[aux[ ,"fold"  ]==f,   ]
+      aux <- aux[aux[ ,"region"]==reg, ]
+      
+      # T-TEST
+      # We get the previously calculated z-scores corresponding to controls and patients
+      z_hc  <- aux[aux[, "diagnose"]== "control", "Z-score"]
+      z_pat <- aux[aux[, "diagnose"]== "patient", "Z-score"]
+      
+      pval.ttest <- t.test(x = z_pat, y = z_hc, alternative = "two.sided",
+                           mu = 0, var.equal = TRUE, conf.level  = 0.95)$p.value
+      
+      ### CONTROLS
+      # We get the model predictions and the true values from the control data
+      pred_hc  <- aux[aux[, "diagnose"]== "control", "y_pred"]
+      true_hc  <- aux[aux[, "diagnose"]== "control", "y_true"]
+    
+      # CORRELATION COEFFICIENT
+      # "pearson" (default), "kendall", or "spearman"
+      corr.coef <- cor(pred_hc, true_hc)
+      
+      # Mean Absolute Error (MAE)
+      MAE <- mean_absolute_error(pred_hc, true_hc)
+      # Mean Squared Error (MSE)
+      MSE <- mean_squared_error(pred_hc, true_hc)
+    
+      # Standardized Mean Squared Error (SMSE)
+      # It is the MSE divided by the variance of the true values
+      # The less is the better. SMSE < 1 show that we learn something meaningful
+      SMSE <- MSE/var(true_hc)
+
+      # Standardized Mean Absolute Error (SMAE)
+      # It is the MAE divided by the deviation of the true values
+      # The less is the better. 
+      SMAE <- MAE/sd(true_hc)
+      
+      # Coefficient of determination (R2) (same as EV)
+      rss <- sum((pred_hc - true_hc) ^ 2)       # Residual Sum of Squares
+      tss <- sum((true_hc - mean(true_hc)) ^ 2) # Total Sum of Squares
+      r2  <- 1 - rss/tss
+    
+      metrics_df <- rbind(metrics_df, data.frame("region" = reg,
+                                           "fold"   = f,
+                                           "diagnose"  = "control",
+                                           "corr" = round(corr.coef,5),
+                                           "MAE"  = round(MAE,5),
+                                           "MSE"  = round(MSE,5),
+                                           "SMSE" = round(SMSE,5),
+                                           "SMAE" = round(SMAE,5),
+                                           "R2"   = round(r2,5),
+                                           "pval t-test" = round(pval.ttest,5)))
+      
+      ### PATIENTS
+      # We get the model predictions and the true values from the patients data
+      pred_pat  <- aux[aux[, "diagnose"]== "patient","y_pred"]
+      true_pat  <- aux[aux[, "diagnose"]== "patient","y_true"]
+    
+      # CORRELATION COEFFICIENT
+      # "pearson" (default), "kendall", or "spearman"
+      corr.coef <- cor(pred_pat, true_pat)
+      
+      # Mean Absolute Error (MAE)
+      MAE <- mean_absolute_error(pred_pat, true_pat)
+      # Mean Squared Error (MSE)
+      MSE <- mean_squared_error(pred_pat, true_pat)
+    
+      # Standardized Mean Squared Error (SMSE)
+      # It is the MSE divided by the variance of the true values
+      # The less is the better. SMSE < 1 show that we learn something meaningful
+      SMSE <- MSE/var(true_pat)
+
+      # Standardized Mean Absolute Error (SMAE)
+      # It is the MAE divided by the deviation of the true values
+      # The less is the better. 
+      SMAE <- MAE/sd(true_pat)
+        
+      # Coefficient of determination (R2)
+      rss <- sum((pred_pat - true_pat) ^ 2)       # Residual Sum of Squares
+      tss <- sum((true_pat - mean(true_pat)) ^ 2) # Total Sum of Squares
+      r2  <- 1 - rss/tss
+    
+      metrics_df <- rbind(metrics_df, data.frame("region" = reg,
+                                           "fold"   = f,
+                                           "diagnose"  = "patient",
+                                           "corr" = round(corr.coef,5),
+                                           "MAE"  = round(MAE,5),
+                                           "MSE"  = round(MSE,5),
+                                           "SMSE" = round(SMSE,5),
+                                           "SMAE" = round(SMAE,5),
+                                           "R2"   = round(r2,5),
+                                           "pval t-test" = round(pval.ttest,5))) 
+    }
+  }
+
+# # FDR correction for the t-test p-values, 
+# # by fold (fold 1:correct FDR for all regions, fold 2:..., and so on...)
+#     metrics_df$pval.t.test.FDR <- 0
+#     for (f in 1:10) {
+#       metrics_df_f <- subset(metrics_df, fold==f)
+#       even <- metrics_df_f[!c(TRUE, FALSE), "pval.t.test"]  # Even rows (par)
+#       odd  <- metrics_df_f[ c(TRUE, FALSE), "pval.t.test"]  # Odd rows (impar)
+#       even.FDR <- p.adjust(even, method = "fdr")  # Even rows (par)
+#       odd.FDR  <- p.adjust(odd,  method = "fdr")  # Odd rows (impar)
+#       metrics_df_f[ !c(TRUE,FALSE), "pval.t.test.FDR"] <- even.FDR
+#       metrics_df_f[  c(TRUE,FALSE), "pval.t.test.FDR"] <- odd.FDR
+#       metrics_df[metrics_df[ , "fold"]==f, "pval.t.test.FDR"] <- metrics_df_f[,"pval.t.test.FDR"]
+#       }
+
+return(list("df" = df, 
+            "performance" = metrics_df))
+}
+```
+
+
+```{r eval = F, include=FALSE}
+metrics_68NoM <- extract_metrics_f(predictions_68NoM)
+performance_68NoM_f <- metrics_68NoM$performance
+
+metrics_308NoM <- extract_metrics_f(predictions_308NoM)
+performance_308NoM_f <- metrics_308NoM$performance
+
+metrics_68M <- extract_metrics_f(predictions_68M)
+performance_68M_f <- metrics_68M$performance
+
+metrics_308M <- extract_metrics_f(predictions_308M)
+performance_308M_f <- metrics_308M$performance
+
+write.csv(performance_308M_f,"/data_J/Results/Files/performance_308M_f.csv", row.names = FALSE)
+write.csv(performance_308NoM_f,"/data_J/Results/Files/performance_308NoM_f.csv", row.names = FALSE)
+write.csv(performance_68M_f,"/data_J/Results/Files/performance_68M_f.csv", row.names = FALSE)
+write.csv(performance_68NoM_f,"/data_J/Results/Files/performance_68NoM_f.csv", row.names = FALSE)
+
+rm(metrics_68NoM, metrics_308NoM, metrics_68M, metrics_308M)
+```
+
+
+```{r echo = FALSE}
+performance_68NoM_f  <- read.csv("/data_J/Results/Files/performance_68NoM_f.csv" )
+performance_308NoM_f <- read.csv("/data_J/Results/Files/performance_308NoM_f.csv")
+performance_68M_f    <- read.csv("/data_J/Results/Files/performance_68M_f.csv"   )
+performance_308M_f   <- read.csv("/data_J/Results/Files/performance_308M_f.csv"  )
+
+rm(extract_metrics_f)
+```
+
+```{r echo = FALSE}
+##### Combine all the predictions into one dataset ####
+performance_68NoM_f$Group  <-"68NoM"
+performance_68M_f$Group    <-"68M"
+performance_308NoM_f$Group <-"308NoM"
+performance_308M_f$Group   <-"308M"
+
+performance_f <- rbind(performance_68NoM_f, performance_68M_f,
+                     performance_308NoM_f, performance_308M_f)
+```
+
+
+```{r include=FALSE}
+plot_matrix <- function(df, nreg, ylim.corr, ylim.mae, ylim.mse, 
+                        ylim.smse, ylim.smae, ylim.r2) {
+  df$regionN  <- rep(1:nreg,each=10)
+  
+  # CORRELATION
+  p1 <- ggplot(df, aes(fold, regionN)) +
+  scale_x_continuous(breaks = c(1:10)) + 
+  geom_raster(aes(fill = corr)) +
+  labs(x = " ",
+     y = " ",
+     title = " ") +
+  ggtitle(expression(rho)) +
+  theme(panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      axis.line    = element_line(colour = "black"),
+      plot.title   = element_text(size=15),
+      axis.text    = element_text(size=10),
+      axis.title   = element_text(size=10,face="bold"),
+      legend.title = element_blank()) + 
+  scale_fill_gradientn(colours = c("blue", "red"),
+                       limits=c(ylim.corr))
+
+  # MAE
+  p2 <-   ggplot(df, aes(fold, regionN)) +
+  scale_x_continuous(breaks = c(1:10)) + 
+  geom_raster(aes(fill = MAE)) +
+  labs(x = " ",
+     y = " ",
+     title = "MAE") +
+  theme(panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      axis.line    = element_line(colour = "black"),
+      plot.title   = element_text(size=15),
+      axis.text    = element_text(size=10),
+      axis.title   = element_text(size=10,face="bold"),
+      legend.title = element_blank()) + 
+  scale_fill_gradientn(colours = c("blue", "red"),
+                       limits=c(ylim.mae))
+
+  # MSE
+  p3 <- ggplot(df, aes(fold, regionN)) +
+  scale_x_continuous(breaks = c(1:10)) + 
+  geom_raster(aes(fill = MSE)) +
+  labs(x = " ",
+     y = " ",
+     title = "MSE") +
+  theme(panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      axis.line    = element_line(colour = "black"),
+      plot.title   = element_text(size=15),
+      axis.text    = element_text(size=10),
+      axis.title   = element_text(size=10,face="bold"),
+      legend.title = element_blank()) + 
+  scale_fill_gradientn(colours = c("blue", "red"),
+                       limits=c(ylim.mse))
+  
+  # SMSE
+  p4 <- ggplot(df, aes(fold, regionN)) +
+  scale_x_continuous(breaks = c(1:10)) + 
+  geom_raster(aes(fill = SMSE)) +
+  labs(x = " ",
+     y = " ",
+     title = "SMSE") +
+  theme(panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      axis.line    = element_line(colour = "black"),
+      plot.title   = element_text(size=15),
+      axis.text    = element_text(size=10),
+      axis.title   = element_text(size=10,face="bold"),
+      legend.title = element_blank()) + 
+  scale_fill_gradientn(colours = c("blue", "red"),
+                       limits=c(ylim.smse))
+  
+  # SMAE
+  p5 <- ggplot(df, aes(fold, regionN)) +
+  scale_x_continuous(breaks = c(1:10)) + 
+  geom_raster(aes(fill = SMAE)) +
+  labs(x = " ",
+     y = " ",
+     title = "SMAE") +
+  theme(panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      axis.line    = element_line(colour = "black"),
+      plot.title   = element_text(size=15),
+      axis.text    = element_text(size=10),
+      axis.title   = element_text(size=10,face="bold"),
+      legend.title = element_blank()) + 
+  scale_fill_gradientn(colours = c("blue", "red"),
+                       limits=c(ylim.smae))
+    
+  # Coefficient of determination (R2)
+  p6 <- ggplot(df, aes(fold, regionN)) +
+  scale_x_continuous(breaks = c(1:10)) + 
+  geom_raster(aes(fill = R2)) +
+  labs(x = " ",
+     y = " ",
+     title = " ") +
+  ggtitle(bquote(~R^2))+
+  theme(panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      axis.line    = element_line(colour = "black"),
+      plot.title   = element_text(size=15),
+      axis.text    = element_text(size=10),
+      axis.title   = element_text(size=10,face="bold"),
+      legend.title = element_blank()) + 
+  scale_fill_gradientn(colours = c("blue", "red"),
+                       limits=c(ylim.r2))
+  
+  # PLOT ARRANGING
+  figure <- ggarrange(p1, p6, p2, p3, p5, p4, ncol = 2, nrow = 3)
+  annotate_figure(figure,
+                  left = text_grob("Region", rot = 90, face = "bold", 
+                                   size = 15, color = "black"),
+                  bottom = text_grob("fold", 
+                                     face = "bold", size = 15, color = "black"))
+}
+```
+
+
+## 68 regions (NoM)
+
+```{r include=FALSE}
+performance_68NoM_f.hc   <- subset(performance_68NoM_f, diagnose=="control")
+performance_68NoM_f.pat  <- subset(performance_68NoM_f, diagnose=="patient")
+```
+
+```{r echo = FALSE}
+#### Limits of the gradients ####
+# CORR
+ylim.corr <- c(min(c(performance_68NoM_f$corr, performance_68M_f$corr)),
+               max(c(performance_68NoM_f$corr, performance_68M_f$corr)))
+# MAE
+ylim.mae <- c(min(c(performance_68NoM_f$MAE, performance_68M_f$MAE)),
+              max(c(performance_68NoM_f$MAE, performance_68M_f$MAE)))
+# MSE
+ylim.mse <- c(min(c(performance_68NoM_f$MSE, performance_68M_f$MSE)),
+              max(c(performance_68NoM_f$MSE, performance_68M_f$MSE)))
+# SMSE
+ylim.smse <- c(min(c(performance_68NoM_f$SMSE, performance_68M_f$SMSE)),
+              max(c(performance_68NoM_f$SMSE, performance_68M_f$SMSE)))
+# SMAE
+ylim.smae <- c(min(c(performance_68NoM_f$SMAE, performance_68M_f$SMAE)),
+              max(c(performance_68NoM_f$SMAE, performance_68M_f$SMAE)))
+# R2
+ylim.r2 <- c(min(c(performance_68NoM_f$R2, performance_68M_f$R2)),
+              max(c(performance_68NoM_f$R2, performance_68M_f$R2)))
+rm(performance_f)
+```
+
+
+### HEALTHY CONTROLS
+
+```{r echo=FALSE, fig.width = 10, fig.height = 10}
+plot_matrix(performance_68NoM_f.hc, 68, ylim.corr, ylim.mae, ylim.mse, 
+                 ylim.smse, ylim.smae, ylim.r2)
+```
+
+### PATIENTS
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(performance_68NoM_f.pat, 68, ylim.corr, ylim.mae, ylim.mse, 
+                 ylim.smse, ylim.smae, ylim.r2)
+```
+
+## 68 regions (M)
+
+```{r include=FALSE}
+performance_68M_f.hc  <- subset(performance_68M_f, diagnose=="control")
+performance_68M_f.pat <- subset(performance_68M_f, diagnose=="patient")
+```
+
+### HEALTHY CONTROLS
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(performance_68M_f.hc, 68, ylim.corr, ylim.mae, ylim.mse, 
+                 ylim.smse, ylim.smae, ylim.r2)
+```
+
+### PATIENTS
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(performance_68M_f.pat, 68, ylim.corr, ylim.mae, ylim.mse, 
+                 ylim.smse, ylim.smae, ylim.r2)
+```
+
+## Difference between NoM and M (68 Regions)
+
+```{r echo=FALSE}
+diff_68_NoM_M_hc <- cbind(performance_68NoM_f.hc[,1:3],
+                       abs(performance_68NoM_f.hc[,4:9] - performance_68M_f.hc[,4:9]))
+diff_68_NoM_M_pat <- cbind(performance_68NoM_f.pat[,1:3],
+                       abs(performance_68NoM_f.pat[,4:9] - performance_68M_f.pat[,4:9]))
+
+ylim.corr <- c(min(c(diff_68_NoM_M_pat$corr, diff_68_NoM_M_hc$corr)),
+               max(c(diff_68_NoM_M_pat$corr, diff_68_NoM_M_hc$corr)))
+ylim.mae  <- c(min(c(diff_68_NoM_M_pat$MAE, diff_68_NoM_M_hc$MAE)),
+               max(c(diff_68_NoM_M_pat$MAE, diff_68_NoM_M_hc$MAE)))
+ylim.mse  <- c(min(c(diff_68_NoM_M_pat$MSE, diff_68_NoM_M_hc$MSE)),
+               max(c(diff_68_NoM_M_pat$MSE, diff_68_NoM_M_hc$MSE)))
+ylim.smse <- c(min(c(diff_68_NoM_M_pat$SMSE, diff_68_NoM_M_hc$SMSE)),
+               max(c(diff_68_NoM_M_pat$SMSE, diff_68_NoM_M_hc$SMSE)))
+ylim.smae <- c(min(c(diff_68_NoM_M_pat$SMAE, diff_68_NoM_M_hc$SMAE)),
+               max(c(diff_68_NoM_M_pat$SMAE, diff_68_NoM_M_hc$SMAE)))
+ylim.r2   <- c(min(c(diff_68_NoM_M_pat$R2, diff_68_NoM_M_hc$R2)),
+               max(c(diff_68_NoM_M_pat$R2, diff_68_NoM_M_hc$R2)))
+```
+
+
+## Healthy controls:
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(diff_68_NoM_M_hc, 68, ylim.corr, ylim.mae, ylim.mse, ylim.smse, ylim.smae, ylim.r2)
+```
+
+## Patients: 
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(diff_68_NoM_M_pat, 68, ylim.corr, ylim.mae, ylim.mse, ylim.smse, ylim.smae, ylim.r2)
+```
+
+
+## 308 regions (NoM)
+
+```{r include=FALSE}
+performance_308NoM_f.hc  <- subset(performance_308NoM_f, diagnose=="control")
+performance_308NoM_f.pat <- subset(performance_308NoM_f, diagnose=="patient")
+```
+
+```{r echo = FALSE}
+#### Limits of the gradients ####
+# CORR
+ylim.corr <- c(min(c(performance_308NoM_f$corr, performance_308M_f$corr)),
+               max(c(performance_308NoM_f$corr, performance_308M_f$corr)))
+# MAE
+ylim.mae <- c(min(c(performance_308NoM_f$MAE, performance_308M_f$MAE)),
+              max(c(performance_308NoM_f$MAE, performance_308M_f$MAE)))
+# MSE
+ylim.mse <- c(min(c(performance_308NoM_f$MSE, performance_308M_f$MSE)),
+              max(c(performance_308NoM_f$MSE, performance_308M_f$MSE)))
+# SMSE
+ylim.smse <- c(min(c(performance_308NoM_f$SMSE, performance_308M_f$SMSE)),
+               max(c(performance_308NoM_f$SMSE, performance_308M_f$SMSE)))
+# SMAE
+ylim.smae <- c(min(c(performance_308NoM_f$SMAE, performance_308M_f$SMAE)),
+               max(c(performance_308NoM_f$SMAE, performance_308M_f$SMAE)))
+# R2
+ylim.r2 <- c(min(c(performance_308NoM_f$R2, performance_68M_f$R2)),
+             max(c(performance_308NoM_f$R2, performance_68M_f$R2)))
+rm(performance_f)
+```
+
+### HEALTHY CONTROLS
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(performance_308NoM_f.hc, 308, ylim.corr, ylim.mae, ylim.mse, 
+            ylim.smse, ylim.smae, ylim.r2)
+```
+
+### PATIENTS
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(performance_308NoM_f.pat, 308, ylim.corr, ylim.mae, ylim.mse, 
+            ylim.smse, ylim.smae, ylim.r2)
+```
+
+## 308 regions (M)
+
+```{r include=FALSE}
+performance_308M_f.hc  <- subset(performance_308M_f, diagnose=="control")
+performance_308M_f.pat <- subset(performance_308M_f, diagnose=="patient")
+```
+
+## HEALTHY CONTROLS
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(performance_308M_f.hc, 308, ylim.corr, ylim.mae, ylim.mse, 
+            ylim.smse, ylim.smae, ylim.r2)
+```
+
+## PATIENTS
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(performance_308M_f.pat, 308, ylim.corr, ylim.mae, ylim.mse, 
+            ylim.smse, ylim.smae, ylim.r2)
+```
+
+## Difference between NoM and M
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+diff_308_NoM_M_hc <- cbind(performance_308NoM_f.hc[,1:3],
+                       abs(performance_308NoM_f.hc[,4:9] - performance_308M_f.hc[,4:9]))
+diff_308_NoM_M_pat <- cbind(performance_308NoM_f.pat[,1:3],
+                       abs(performance_308NoM_f.pat[,4:9] - performance_308M_f.pat[,4:9]))
+
+ylim.corr <- c(min(c(diff_308_NoM_M_pat$corr, diff_308_NoM_M_hc$corr)),
+               max(c(diff_308_NoM_M_pat$corr, diff_308_NoM_M_hc$corr)))
+ylim.mae  <- c(min(c(diff_308_NoM_M_pat$MAE, diff_308_NoM_M_hc$MAE)),
+               max(c(diff_308_NoM_M_pat$MAE, diff_308_NoM_M_hc$MAE)))
+ylim.mse  <- c(min(c(diff_308_NoM_M_pat$MSE, diff_308_NoM_M_hc$MSE)),
+               max(c(diff_308_NoM_M_pat$MSE, diff_308_NoM_M_hc$MSE)))
+ylim.smse <- c(min(c(diff_308_NoM_M_pat$SMSE, diff_308_NoM_M_hc$SMSE)),
+               max(c(diff_308_NoM_M_pat$SMSE, diff_308_NoM_M_hc$SMSE)))
+ylim.smae <- c(min(c(diff_308_NoM_M_pat$SMAE, diff_308_NoM_M_hc$SMAE)),
+               max(c(diff_308_NoM_M_pat$SMAE, diff_308_NoM_M_hc$SMAE)))
+ylim.r2   <- c(min(c(diff_308_NoM_M_pat$R2, diff_308_NoM_M_hc$R2)),
+               max(c(diff_308_NoM_M_pat$R2, diff_308_NoM_M_hc$R2)))
+```
+
+## Healthy controls:
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(diff_308_NoM_M_hc, 308, ylim.corr, ylim.mae, ylim.mse, ylim.smse, ylim.smae, ylim.r2)
+```
+
+## Patients: 
+
+```{r echo=FALSE, fig.width = 10, fig.height = 8}
+plot_matrix(diff_308_NoM_M_pat, 308, ylim.corr, ylim.mae, ylim.mse, ylim.smse, ylim.smae, ylim.r2)
+```
+
+
+```{r include=FALSE}
+rm(ylim.corr, ylim.mae, ylim.mse, ylim.smse, ylim.smae, ylim.r2, plot_matrix,
+   performance_308M_f.pat, performance_68M_f.pat, performance_308NoM_f.pat, 
+   performance_68NoM_f.pat, performance_308M_f.hc, performance_68M_f.hc, 
+   performance_308NoM_f.hc, performance_68NoM_f.hc, performance_308M_f, 
+   performance_68M_f, performance_308NoM_f, performance_68NoM_f, 
+   plot_performance_mean_sd)
+```
+
+
+
+# SPECIAL CASE 1:
+
+# SCATTERPLOT 68NoM frontalpole & lateroccipital (7th FOLD)
+
+## Data used to train and test this region/fold
+
+```{r echo=FALSE}
+plot_scatterplot_train_test_2reg <- function(df, measure, regs, f) {
+  reg_names <- colnames(df%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names <- sub(measure, "",reg_names) # Delete termination to get a cleaner name
+  new.colnames <- sub(measure, "",colnames(df)) 
+  colnames(df) <- new.colnames
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df[df[,"dcode"]==0, ] 
+  df_pat <- df[df[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  num_folds <- 10
+  
+  # we create 10 folds with the IDs:
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  
+  df <- df[ , c(reg_names[regs], var_names)] # df with only reg_names[regs]
+  df$dcode <- factor(df$dcode)
+  reg_names <- reg_names[regs]
+
+  df  <- subset(df, dcode==0) # Only HC data, not patients
+  train_df <- subset(df, subID%in%train_ids_hc)
+  test_df  <- subset(df, subID%in%test_ids_hc)
+  train_df$partition <- "train"
+  test_df$partition <- "test"
+  df <- combine(train_df, test_df)
+
+  # GRAPHICdf, 
+  reg1 <- ggplot(df, aes_string(x="age", y=reg_names[1], 
+                                group= "subID", color="partition")) +
+    geom_line()+
+    geom_point() +
+    labs(color = "Partition\n") +
+    ggtitle(reg_names[1])+
+    ylim(1.6, 4.2) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.line    = element_line(colour = "black"),
+          plot.title   = element_text(hjust = 0.5),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank()) +
+    scale_fill_discrete(name = "Partition", 
+                        labels = c("Train data", "Test data")) +
+    scale_colour_manual(name = " ",
+                        labels = c("Test data", "Train data"), 
+                        values = c("#FF0000CC", "#0000FF40"))
+    
+    
+  reg2 <- ggplot(df, aes_string(x="age", y=reg_names[2], 
+                                group= "subID", color="partition")) +
+    geom_line()+
+    geom_point() +
+    labs(color = "Partition\n") +
+    ggtitle(reg_names[2])+
+    ylim(1.6, 4.2) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.line    = element_line(colour = "black"),
+          plot.title   = element_text(hjust = 0.5),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank()) +
+    scale_fill_discrete(name = "Partition", 
+                        labels = c("Train data", "Test data")) +
+    scale_colour_manual(name = " ",
+                        labels = c("Test data", "Train data"), 
+                        values = c("#FF0000CC", "#0000FF40"))
+        
+  # Test 440154FF ---> 440154CC
+  # Train B8DE29FF --> B8DE2940
+  # Adjust transparency in HEX colors:
+  # adjustcolor("red", alpha.f = 0.8) # Test
+  # adjustcolor("blue", alpha.f = 0.25) # Train
+
+  
+  figure <- ggarrange(reg1, reg2,
+                      ncol = 2, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob("Train vs Test data\n", 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+
+```{r include=FALSE}
+df_68  <- getData(parc = "68")
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      harmonization = T,
+                      match = F)
+measure <- "_CT_freesurfer"
+
+reg_names  <- colnames(df%>%dplyr::select(ends_with(measure)))
+reg1 <- which(reg_names=="lh_frontalpole_CT_freesurfer", arr.ind = FALSE, useNames = TRUE) # REG MAL
+reg2 <- which(reg_names=="lh_lateraloccipital_CT_freesurfer", arr.ind = FALSE, useNames = TRUE) # REG BIEN
+
+regs <- c(reg1, reg2) 
+f <- 7
+```
+
+```{r echo=FALSE}
+plot_scatterplot_train_test_2reg(df, measure, regs, f)
+```
+
+
+```{r eval=F, echo = FALSE}
+# To get the MSE and MAE values from both regions
+performance_68NoM_f  <- read.csv("/data_J/Results/Files/performance_68NoM_f.csv" )
+df <- performance_68NoM_f[performance_68NoM_f[,"fold"]==7,]
+df <- df[df[,"diagnose"]=="control",]
+
+which(reg_names=="lh_frontalpole_CT_freesurfer", arr.ind = FALSE, useNames = TRUE) # REG MAL
+which(reg_names=="lh_lateraloccipital_CT_freesurfer", arr.ind = FALSE, useNames = TRUE) # REG BIEN
+```
+
+```{r echo=F}
+rm(df, measure, reg_names, reg1, reg2, regs, f)
+```
+
+## Target data vs predicted data 
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_2reg <- function(df_orig, df_predictions, measure, regs, f) {
+  
+  # DF_PREDICTIONS Change region names rh_temporalpole_CT_freesurfer -> rh_temporalpole
+  reg_names <- df_predictions$region
+  new_reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  df_predictions$region <- new_reg_names # Rename all the columns
+
+  # DF_ORIGIN Change region names rh_temporalpole_CT_freesurfer -> rh_temporalpole
+  reg_names <- colnames(df_orig%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  new.colnames <- sub(measure, "", colnames(df_orig)) # ALL COLNAMES # Delete termination to get a cleaner name
+  colnames(df_orig) <- new.colnames # Rename all the columns
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df_orig[df_orig[,"dcode"]==0, ] 
+  df_pat <- df_orig[df_orig[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers of healthy subjects and patients:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  # we create 10 folds with the IDs:
+  num_folds <- 10
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  ##### UNTIL HERE CROSS-VAL SUBJECTS IDENTIFICATION #####
+
+  # DF_ORIG
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  reg_names <- reg_names[regs]
+  df_orig <- df_orig[ , c(reg_names, var_names)] # df_orig with only relevant data
+  
+  # ONLY HEALTHY CONTROLS
+  df_orig$dcode <- factor(df_orig$dcode)
+  df_orig  <- subset(df_orig, dcode==0) 
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions   <- subset(df_predictions, fold==f) 
+  df_predictions1  <- subset(df_predictions, region==reg_names[1]) 
+  df_predictions2  <- subset(df_predictions, region==reg_names[2]) 
+  df_predictions_m <- rbind(df_predictions1, df_predictions2)
+  df_predictions_test <- subset(df_predictions_m, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                                 idvar = c("subID", "timepoint"), 
+                                 timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint","y_true.lh_frontalpole", 
+           "y_pred.lh_frontalpole", "y_true.lh_lateraloccipital", 
+           "y_pred.lh_lateraloccipital")
+  
+  df_to_plot_reg_1 <- df_merged %>%
+    select("age","subID","timepoint","y_true.lh_frontalpole","y_pred.lh_frontalpole") %>%
+    dplyr::arrange(subID)
+  
+  reg1_name <- sub("y_pred.", "",colnames(df_to_plot_reg_1)[5]) # Get region name
+  colnames(df_to_plot_reg_1) <- c("age","subID","timepoint","y_true","y_pred")
+  
+  df_to_plot_reg_2 <- df_merged %>%
+  select("age","subID","timepoint", "y_true.lh_lateraloccipital", 
+         "y_pred.lh_lateraloccipital") %>%
+    dplyr::arrange(subID)
+  
+  reg2_name <- sub("y_pred.", "",colnames(df_to_plot_reg_2)[5]) # Get region name
+  colnames(df_to_plot_reg_2) <- c("age","subID","timepoint","y_true","y_pred")
+
+  
+  ylim.min <- min(c(df_to_plot_reg_1$y_true, df_to_plot_reg_1$y_pred, 
+                    df_to_plot_reg_2$y_true, df_to_plot_reg_2$y_pred))
+  
+  ylim.max <- max(c(df_to_plot_reg_1$y_true, df_to_plot_reg_1$y_pred, 
+                    df_to_plot_reg_2$y_true, df_to_plot_reg_2$y_pred))
+  
+  # GRAPHICS
+  reg1 <- ggplot(df_to_plot_reg_1) +
+      # PREDICTIONS
+      geom_line(aes(x=age, y=y_pred, group= subID, color= "y_pred"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_pred, group= subID, color="y_pred"), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_1[df_to_plot_reg_1$timepoint==1, ], 
+              aes(x=age, y=y_pred, label=paste0(subID)), check_overlap = F, size= 3) +
+      # TRUE VALUES
+      geom_line(aes(x=age, y=y_true, group= subID, color= "y_true"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_true, group= subID, color="y_true"), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_1[df_to_plot_reg_1$timepoint==1, ], 
+            aes(x=age, y=y_true, label=paste0(subID)),check_overlap = F, size= 3) +
+      ggtitle(reg1_name)+
+      ylim(ylim.min, ylim.max) +
+      labs(color = "Partition\n") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank()) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+    
+  reg2 <- ggplot(df_to_plot_reg_2) +
+      # PREDICTIONS
+      geom_line(aes(x=age, y=y_pred, group= subID, color= "y_pred"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_pred, group= subID, color="y_pred"), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_2[df_to_plot_reg_2$timepoint==1, ], 
+              aes(x=age, y=y_pred, label=paste0(subID)),check_overlap = F, size= 3) +
+      # TRUE VALUES
+      geom_line(aes(x=age, y=y_true, group= subID, color= "y_true"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_true, group= subID, color="y_true"), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_2[df_to_plot_reg_2$timepoint==1, ], 
+          aes(x=age, y=y_true, label=paste0(subID)), check_overlap = F, size= 3) +
+      ggtitle(reg2_name)+
+      ylim(ylim.min, ylim.max) +
+      labs(color = "Partition\n") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank()) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+      
+  figure <- ggarrange(reg1, reg2,
+                      ncol = 2, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob("Target vs Predicted data\n", 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+```{r include=FALSE}
+measure <- "_CT_freesurfer"
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      harmonization = T,
+                      match = F)
+
+reg_names  <- colnames(df%>%dplyr::select(ends_with(measure)))
+
+reg1 <- which(reg_names=="lh_frontalpole_CT_freesurfer", arr.ind = FALSE, useNames = TRUE)
+reg2 <- which(reg_names=="lh_lateraloccipital_CT_freesurfer", arr.ind = FALSE, useNames = TRUE) 
+regs <- c(reg1, reg2) 
+
+f <- 7
+```
+
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_2reg(df, predictions_68NoM, measure, regs, f)
+```
+```{r echo=F}
+rm(df, measure, reg_names, reg1, reg2, regs, f)
+```
+
+## Difference between target data vs predicted data 
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_diff_2reg <- function(df_orig, df_predictions, measure, regs, f) {
+  
+  # DF_PREDICTIONS Change region names rh_temporalpole_CT_freesurfer -> rh_temporalpole
+  reg_names <- df_predictions$region
+  new_reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  df_predictions$region <- new_reg_names # Rename all the columns
+
+  # DF_ORIGIN Change region names rh_temporalpole_CT_freesurfer -> rh_temporalpole
+  reg_names <- colnames(df_orig%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  new.colnames <- sub(measure, "", colnames(df_orig)) # ALL COLNAMES # Delete termination to get a cleaner name
+  colnames(df_orig) <- new.colnames # Rename all the columns
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df_orig[df_orig[,"dcode"]==0, ] 
+  df_pat <- df_orig[df_orig[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers of healthy subjects and patients:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  # we create 10 folds with the IDs:
+  num_folds <- 10
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  ##### UNTIL HERE CROSS-VAL SUBJECTS IDENTIFICATION #####
+
+  # DF_ORIG
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  reg_names <- reg_names[regs]
+  df_orig <- df_orig[ , c(reg_names, var_names)] # df_orig with only relevant data
+  # ONLY HEALTHY CONTROLS
+  df_orig$dcode <- factor(df_orig$dcode)
+  df_orig  <- subset(df_orig, dcode==0) 
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  
+  # DF_PREDICTIONS
+  df_predictions   <- subset(df_predictions, fold==f) 
+  df_predictions1  <- subset(df_predictions, region==reg_names[1]) 
+  df_predictions2  <- subset(df_predictions, region==reg_names[2]) 
+  df_predictions_m <- rbind(df_predictions1, df_predictions2)
+  df_predictions_test <- subset(df_predictions_m, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                                 idvar = c("subID", "timepoint"), 
+                                 timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint","y_true.lh_frontalpole", 
+           "y_pred.lh_frontalpole", "y_true.lh_lateraloccipital", 
+           "y_pred.lh_lateraloccipital")
+  
+  df_to_plot_reg_1 <- df_merged %>%
+    select("age","subID","timepoint","y_true.lh_frontalpole","y_pred.lh_frontalpole") %>%
+    dplyr::arrange(subID)
+  
+  reg1_name <- sub("y_pred.", "",colnames(df_to_plot_reg_1)[5]) # Get region name
+  colnames(df_to_plot_reg_1) <- c("age","subID","timepoint","y_true","y_pred")
+  
+  df_to_plot_reg_2 <- df_merged %>%
+  select("age","subID","timepoint", "y_true.lh_lateraloccipital", 
+         "y_pred.lh_lateraloccipital") %>%
+    dplyr::arrange(subID)
+  
+  reg2_name <- sub("y_pred.", "",colnames(df_to_plot_reg_2)[5]) # Get region name
+  colnames(df_to_plot_reg_2) <- c("age","subID","timepoint","y_true","y_pred")
+
+  df_to_plot_reg_1 <- df_to_plot_reg_1 %>%
+    mutate(diff=abs(y_true-y_pred))
+  
+  df_to_plot_reg_2 <- df_to_plot_reg_2 %>%
+    mutate(diff=abs(y_true-y_pred))
+
+  # GRAPHICS
+  reg1 <- ggplot(df_to_plot_reg_1) +
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_1[df_to_plot_reg_1$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)), check_overlap = F, size= 3) +
+      ggtitle(reg1_name)+
+      ylim(0, 0.7) +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank())
+  reg2 <- ggplot(df_to_plot_reg_2) +
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_2[df_to_plot_reg_2$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)),check_overlap = F, size= 3) +
+      ggtitle(reg2_name)+
+      ylim(0, 0.7) +
+      labs(color = "Partition\n") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank())
+      
+  figure <- ggarrange(reg1, reg2,
+                      ncol = 2, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob("Difference between target and predicted data\n", 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+
+```{r include=FALSE}
+measure <- "_CT_freesurfer"
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      harmonization = T,
+                      match = F)
+
+reg_names  <- colnames(df%>%dplyr::select(ends_with(measure)))
+reg1 <- which(reg_names=="lh_frontalpole_CT_freesurfer", arr.ind = FALSE, useNames = TRUE)      # REG MAL
+reg2 <- which(reg_names=="lh_lateraloccipital_CT_freesurfer", arr.ind = FALSE, useNames = TRUE) # REG BIEN
+regs <- c(reg1, reg2) 
+
+f <- 7
+```
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_diff_2reg(df, predictions_68NoM, measure, regs, f)
+```
+```{r echo=F}
+rm(df, measure, reg_names, reg1, reg2, regs, f, df_68)
+```
+
+## Ordered regions by decreasing MSE
+
+```{r include=F}
+performance_68NoM  <- read.csv("/data_J/Results/Files/performance_68NoM.csv" )
+
+RegsByMSE <- performance_68NoM %>%
+  dplyr::filter(diagnose=="control")%>%
+  dplyr::select(region, diagnose, MSE)
+
+measure <- "_CT_freesurfer"
+df <- performance_68NoM
+reg_names <- df$region # Get the names of all the regions
+new_reg_names <- sub(measure, "", reg_names) # Delete termination to get a cleaner name
+df$region <- new_reg_names # Get the names of all the regions
+```
+
+```{r echo=F}
+df %>%
+  filter(diagnose=="control")%>% # only CONTROLS
+  arrange(MSE) %>%               # ORDER by increasing value
+  mutate(region=factor(region, levels=region)) %>%   # This trick update the factor levels
+  ggplot( aes(x=region, y=MSE)) +
+    geom_segment(aes(xend=region, yend=0)) +
+    geom_point(size=2, color="black") +
+    coord_flip() +
+    theme_bw() +
+    xlab(" ") +
+    ylab("MSE") +
+  ggtitle("Ordered regions by decreasing MSE")+
+  theme(panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      axis.line    = element_line(colour = "black"),
+      axis.text    = element_text(size=8),
+      plot.title = element_text(size = 12),
+      legend.title = element_blank()) 
+```
+
+```{r include=F}
+rm(df, RegsByMSE, measure, new_reg_names, reg_names)
+```
+
+
+## Ordered regions by decreasing MAE
+
+```{r include=F}
+RegsByMAE <- performance_68NoM %>%
+  dplyr::filter(diagnose=="control")%>%
+  dplyr::select(region, diagnose, MAE)
+
+measure <- "_CT_freesurfer"
+df <- performance_68NoM
+reg_names <- df$region # Get the names of all the regions
+new_reg_names <- sub(measure, "", reg_names) # Delete termination to get a cleaner name
+df$region <- new_reg_names # Get the names of all the regions
+```
+
+```{r echo=F}
+df %>%
+  filter(diagnose=="control")%>% # only CONTROLS
+  arrange(MAE) %>%               # ORDER by increasing value
+  mutate(region=factor(region, levels=region)) %>%   # This trick update the factor levels
+  ggplot( aes(x=region, y=MAE)) +
+    geom_segment(aes(xend=region, yend=0)) +
+    geom_point(size=2, color="black") +
+    coord_flip() +
+    theme_bw() +
+    xlab(" ") +
+    ylab("MAE") +
+  ggtitle("Ordered regions by decreasing MAE")+
+  theme(panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank(),
+      axis.line    = element_line(colour = "black"),
+      axis.text    = element_text(size=8),
+      plot.title = element_text(size = 12),
+      legend.title = element_blank()) 
+```
+
+```{r include=F}
+rm(df, RegsByMAE, measure, new_reg_names, reg_names, performance_68NoM)
+```
+
+
+# SPECIAL CASE 2:
+
+# SCATTERPLOT 7, 8 and 9th FOLD, 68NoM (rh_precentral)
+
+## Data used to train and test this region/fold
+
+
+```{r echo=FALSE}
+plot_scatterplot_train_test_1reg <- function(df_orig, measure, reg, folds) {
+  
+  reg_names <- colnames(df_orig%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names_short <- sub(measure, "", reg_names) # Delete termination to get a cleaner name
+  region <- reg_names[reg]
+  region_short <- reg_names_short[reg]
+  rm(reg_names, reg_names_short, reg, measure)
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df_orig[df_orig[,"dcode"]==0, ] 
+  df_pat <- df_orig[df_orig[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  num_folds <- 10
+  
+  # we create 10 folds with the IDs:
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # FIRST FOLD (6th)
+  f <- folds[1]
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  df <- df_orig[ , c(region, var_names)] # df with only reg_names[regs]
+  df$dcode <- factor(df$dcode)
+  df  <- subset(df, dcode==0)
+  train_df <- subset(df, subID%in%train_ids_hc)
+  test_df  <- subset(df, subID%in%test_ids_hc)
+  train_df$partition <- "train"
+  test_df$partition <- "test"
+  df <- combine(train_df, test_df)
+  colnames(df) <- c(region_short, var_names, "partition")
+
+  # GRAPHIC
+  fold1 <- ggplot(df, aes_string(x="age", y=region_short, 
+                                group= "subID", color="partition")) +
+    geom_line(alpha = 0.5)+
+    ggtitle(paste0("FOLD ",f))+
+    geom_point(alpha = 0.5) +
+    labs(color = "Partition\n", 
+         y = "Cortical thickness (mm)",
+         x = "Age (years)") +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.line    = element_line(colour = "black"),
+          plot.title   = element_text(hjust = 0.5)) +
+    scale_fill_discrete(name = "Partition", labels = c("Train", "Test")) +
+    scale_colour_manual(name = " ", 
+                        labels = c("Test", "Train"), 
+                        values = c("#FF0000CC", "#0000FF40"))
+  
+  # SECOND FOLD (7th)
+  f <- folds[2]
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  df <- df_orig[ , c(region, var_names)] # df with only reg_names[regs]
+  df$dcode <- factor(df$dcode)
+  df  <- subset(df, dcode==0)
+  train_df <- subset(df, subID%in%train_ids_hc)
+  test_df  <- subset(df, subID%in%test_ids_hc)
+  train_df$partition <- "train"
+  test_df$partition <- "test"
+  df <- combine(train_df, test_df)
+  colnames(df) <- c(region_short, var_names, "partition")
+
+  # GRAPHIC
+  fold2 <- ggplot(df, aes_string(x="age", y=region_short, 
+                                group= "subID", color="partition")) +
+    geom_line(alpha = 0.5)+
+    ggtitle(paste0("FOLD ",f))+
+    geom_point(alpha = 0.5) +
+    labs(color = "Partition\n", 
+         y = "Cortical thickness (mm)",
+         x = "Age (years)") +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.line    = element_line(colour = "black"),
+          plot.title   = element_text(hjust = 0.5)) +
+    scale_fill_discrete(name = "Partition", labels = c("Train", "Test")) +
+    scale_colour_manual(name = " ", 
+                        labels = c("Test", "Train"), 
+                        values = c("#FF0000CC", "#0000FF40"))
+  
+  # THIRD FOLD (8th)
+  f <- folds[3]
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  df <- df_orig[ , c(region, var_names)] # df with only reg_names[regs]
+  df$dcode <- factor(df$dcode)
+  df  <- subset(df, dcode==0)
+  train_df <- subset(df, subID%in%train_ids_hc)
+  test_df  <- subset(df, subID%in%test_ids_hc)
+  train_df$partition <- "train"
+  test_df$partition <- "test"
+  df <- combine(train_df, test_df)
+  colnames(df) <- c(region_short, var_names, "partition")
+
+  # GRAPHIC
+  fold3 <- ggplot(df, aes_string(x="age", y=region_short, 
+                                group= "subID", color="partition")) +
+    geom_line(alpha = 0.5)+
+    ggtitle(paste0("FOLD ",f))+
+    geom_point(alpha = 0.5) +
+    labs(color = "Partition\n", 
+         y = "Cortical thickness (mm)",
+         x = "Age (years)") +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.line    = element_line(colour = "black"),
+          plot.title   = element_text(hjust = 0.5)) +
+    scale_fill_discrete(name = "Partition", labels = c("Train", "Test")) +
+    scale_colour_manual(name = " ", 
+                        labels = c("Test", "Train"), 
+                        values = c("#FF0000CC", "#0000FF40"))
+  
+  
+  figure <- ggarrange(fold1, fold2, fold3,
+                      ncol = 3, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob(paste0("Train vs Test data (",region_short,")"), 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+
+```{r include=FALSE}
+df_68  <- getData(parc = "68")
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      harmonization = T,
+                      match = F)
+measure <- "_CT_freesurfer"
+reg_names  <- colnames(df%>%dplyr::select(ends_with(measure)))
+reg <- which(reg_names=="rh_precentral_CT_freesurfer", arr.ind = FALSE, useNames = TRUE)
+folds <- c(6,7,8)
+
+performance_68NoM_f <- read.csv("/data_J/Results/Files/performance_68NoM_f.csv")
+values <- performance_68NoM_f[performance_68NoM_f[,"region"]=="rh_precentral_CT_freesurfer", ]
+values <- values[values[,"diagnose"]=="control", c("SMSE", "SMAE","fold")]
+```
+
+```{r echo=FALSE}
+plot_scatterplot_train_test_1reg(df, measure, reg, folds)
+rm(df_68, reg_names, df, folds, measure, reg)
+```
+
+## Target data vs predicted data
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_1reg <- function(df_orig, df_predictions, measure, reg, f) {
+  
+  # DF_PREDICTIONS (Change region names) 
+  # rh_precentral_CT_freesurfer -> rh_precentral
+  reg_names <- df_predictions$region
+  new_reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  df_predictions$region <- new_reg_names # Rename all the columns
+
+  # DF_ORIGIN (Change region names) 
+  reg_names <- colnames(df_orig%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  region_short <- reg_names[reg]
+
+  new.colnames <- sub(measure, "", colnames(df_orig)) # ALL COLNAMES # Delete termination to get a cleaner name
+  colnames(df_orig) <- new.colnames # Rename all the columns
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df_orig[df_orig[,"dcode"]==0, ] 
+  df_pat <- df_orig[df_orig[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers of healthy subjects and patients:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  # we create 10 folds with the IDs:
+  num_folds <- 10
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # DF_ORIG
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  reg_name <- reg_names[reg]
+  df_orig <- df_orig[ , c(reg_name, var_names)] # df_orig with only relevant data
+  # ONLY HEALTHY CONTROLS
+  df_orig$dcode <- factor(df_orig$dcode)
+  df_orig  <- subset(df_orig, dcode==0) 
+
+  ylim.min <- min(c(subset(subset(df_predictions, fold==folds[1]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[2]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[3]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[1]),region==reg_name)$y_true,
+                    subset(subset(df_predictions, fold==folds[2]),region==reg_name)$y_true,
+                    subset(subset(df_predictions, fold==folds[3]),region==reg_name)$y_true))
+  
+  ylim.max <- max(c(subset(subset(df_predictions, fold==folds[1]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[2]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[3]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[1]),region==reg_name)$y_true,
+                    subset(subset(df_predictions, fold==folds[2]),region==reg_name)$y_true,
+                    subset(subset(df_predictions, fold==folds[3]),region==reg_name)$y_true))
+  
+  
+  # FIRST FOLD (fold 6th)
+  f <- folds[1]
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions_plot  <- subset(df_predictions, fold==f) 
+  df_predictions_plot  <- subset(df_predictions_plot, region==reg_name) 
+  df_predictions_test <- subset(df_predictions_plot, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                               idvar = c("subID", "timepoint"), 
+                               timevar = "region", direction = "wide")
+  
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint",paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name))
+  
+  df_to_plot <- df_merged %>%
+    select("age","subID","timepoint", 
+           paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name)) %>%
+    dplyr::arrange(subID)
+  
+  colnames(df_to_plot) <- c("age","subID","timepoint","y_true","y_pred")
+  
+  # GRAPHICS
+  fold1 <- ggplot(df_to_plot) +
+      ggtitle(paste0("FOLD ",f))+
+      # PREDICTIONS
+      geom_line(aes(x=age, y=y_pred, group= subID, color= "y_pred"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_pred, group= subID, color="y_pred"), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+              aes(x=age, y=y_pred, label=paste0(subID)), check_overlap = F, size= 3) +
+      # TRUE VALUES
+      geom_line(aes(x=age, y=y_true, group= subID, color= "y_true"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_true, group= subID, color="y_true"), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+            aes(x=age, y=y_true, label=paste0(subID)),check_overlap = F, size= 3) +
+      ylim(ylim.min, ylim.max) +
+      labs(x = "Age (years)",
+           y = "Cortical thickness (mm)") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5)) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+
+  
+  
+  
+  # SECOND FOLD (fold 7th)
+  f <- folds[2]
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions_plot  <- subset(df_predictions, fold==f) 
+  df_predictions_plot  <- subset(df_predictions_plot, region==reg_name) 
+  df_predictions_test <- subset(df_predictions_plot, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                               idvar = c("subID", "timepoint"), 
+                               timevar = "region", direction = "wide")
+  
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint",paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name))
+  
+  df_to_plot <- df_merged %>%
+    select("age","subID","timepoint", 
+           paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name)) %>%
+    dplyr::arrange(subID)
+  
+  colnames(df_to_plot) <- c("age","subID","timepoint","y_true","y_pred")
+  
+  # GRAPHICS
+  fold2 <- ggplot(df_to_plot) +
+      ggtitle(paste0("FOLD ",f))+
+      # PREDICTIONS
+      geom_line(aes(x=age, y=y_pred, group= subID, color= "y_pred"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_pred, group= subID, color="y_pred"), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+              aes(x=age, y=y_pred, label=paste0(subID)), check_overlap = F, size= 3) +
+      # TRUE VALUES
+      geom_line(aes(x=age, y=y_true, group= subID, color= "y_true"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_true, group= subID, color="y_true"), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+            aes(x=age, y=y_true, label=paste0(subID)),check_overlap = F, size= 3) +
+      ylim(ylim.min, ylim.max) +
+      labs(x = "Age (years)",
+           y = "Cortical thickness (mm)") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5)) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+  
+  
+  
+  # THIRD FOLD (fold 8th)
+  f <- folds[3]
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions_plot  <- subset(df_predictions, fold==f) 
+  df_predictions_plot  <- subset(df_predictions_plot, region==reg_name) 
+  df_predictions_test <- subset(df_predictions_plot, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                               idvar = c("subID", "timepoint"), 
+                               timevar = "region", direction = "wide")
+  
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint",paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name))
+  
+  df_to_plot <- df_merged %>%
+    select("age","subID","timepoint", 
+           paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name)) %>%
+    dplyr::arrange(subID)
+  
+  colnames(df_to_plot) <- c("age","subID","timepoint","y_true","y_pred")
+  
+  # GRAPHICS
+  fold3 <- ggplot(df_to_plot) +
+      ggtitle(paste0("FOLD ",f))+
+      # PREDICTIONS
+      geom_line(aes(x=age, y=y_pred, group= subID, color= "y_pred"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_pred, group= subID, color="y_pred"), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+              aes(x=age, y=y_pred, label=paste0(subID)), check_overlap = F, size= 3) +
+      # TRUE VALUES
+      geom_line(aes(x=age, y=y_true, group= subID, color= "y_true"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_true, group= subID, color="y_true"), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+            aes(x=age, y=y_true, label=paste0(subID)),check_overlap = F, size= 3) +
+      ylim(ylim.min, ylim.max) +
+      labs(x = "Age (years)",
+           y = "Cortical thickness (mm)") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5)) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+
+  figure <- ggarrange(fold1, fold2, fold3,
+                      ncol = 3, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob(paste0("Target vs Predicted data (",region_short,")"), 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+
+```{r include=FALSE}
+df_68  <- getData(parc = "68")
+
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      harmonization = T,
+                      match = F)
+measure <- "_CT_freesurfer"
+
+reg_names  <- colnames(df%>%dplyr::select(ends_with(measure)))
+reg <- which(reg_names=="rh_precentral_CT_freesurfer",arr.ind = FALSE, useNames = TRUE) 
+folds <- c(6,7,8)
+```
+
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_1reg(df, predictions_68NoM, measure, reg, folds)
+rm(folds, reg_names, reg, measure, df, df_68)
+```
+
+
+## Difference between target data vs predicted data 
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_diff_1reg <- function(df_orig, df_predictions, measure, reg, folds) {
+  
+  # DF_PREDICTIONS (Change region names)
+  # rh_precentral_CT_freesurfer -> rh_precentral
+  reg_names <- df_predictions$region
+  new_reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  df_predictions$region <- new_reg_names # Rename all the columns
+
+  # DF_ORIGIN (Change region names) 
+  reg_names <- colnames(df_orig%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  region_short <- reg_names[reg]
+  new.colnames <- sub(measure, "", colnames(df_orig)) # ALL COLNAMES # Delete termination to get a cleaner name
+  colnames(df_orig) <- new.colnames # Rename all the columns
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df_orig[df_orig[,"dcode"]==0, ] 
+  df_pat <- df_orig[df_orig[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers of healthy subjects and patients:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  # we create 10 folds with the IDs:
+  num_folds <- 10
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # DF_ORIG
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  reg_name <- reg_names[reg]
+  df_orig <- df_orig[ , c(reg_name, var_names)] # df_orig with only relevant data
+  # ONLY HEALTHY CONTROLS
+  df_orig$dcode <- factor(df_orig$dcode)
+  df_orig  <- subset(df_orig, dcode==0) 
+
+  ylim.min <- min(c(subset(subset(df_predictions, fold==folds[1]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[2]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[3]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[1]),region==reg_name)$y_true,
+                    subset(subset(df_predictions, fold==folds[2]),region==reg_name)$y_true,
+                    subset(subset(df_predictions, fold==folds[3]),region==reg_name)$y_true))
+  
+  ylim.max <- max(c(subset(subset(df_predictions, fold==folds[1]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[2]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[3]),region==reg_name)$y_pred,
+                    subset(subset(df_predictions, fold==folds[1]),region==reg_name)$y_true,
+                    subset(subset(df_predictions, fold==folds[2]),region==reg_name)$y_true,
+                    subset(subset(df_predictions, fold==folds[3]),region==reg_name)$y_true))
+  
+  # FIRST FOLD (fold 6th)
+  f <- folds[1]
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions_plot  <- subset(df_predictions, fold==f) 
+  df_predictions_plot  <- subset(df_predictions_plot, region==reg_name) 
+  df_predictions_test <- subset(df_predictions_plot, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                               idvar = c("subID", "timepoint"), 
+                               timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint",paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name))
+  
+  df_to_plot <- df_merged %>%
+    select("age","subID","timepoint", 
+           paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name)) %>%
+    dplyr::arrange(subID)
+
+  colnames(df_to_plot) <- c("age","subID","timepoint","y_true","y_pred")
+  df_to_plot <- df_to_plot %>%
+    mutate(diff=abs(y_true-y_pred))
+
+  # GRAPHICS
+  fold1 <- ggplot(df_to_plot) +
+      ggtitle(paste0("FOLD ",f))+
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)), check_overlap = F, size= 3) +
+      ylim(0, 0.4) +
+      labs(x = "Age (years)",
+           y = "Cortical thickness (mm)") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5)) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+  
+  # SECOND FOLD (fold 7th)
+  f <- folds[2]
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions_plot  <- subset(df_predictions, fold==f) 
+  df_predictions_plot  <- subset(df_predictions_plot, region==reg_name) 
+  df_predictions_test <- subset(df_predictions_plot, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                               idvar = c("subID", "timepoint"), 
+                               timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint",paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name))
+  
+  df_to_plot <- df_merged %>%
+    select("age","subID","timepoint", 
+           paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name)) %>%
+    dplyr::arrange(subID)
+
+  colnames(df_to_plot) <- c("age","subID","timepoint","y_true","y_pred")
+  df_to_plot <- df_to_plot %>%
+    mutate(diff=abs(y_true-y_pred))
+
+  # GRAPHICS
+  fold2 <- ggplot(df_to_plot) +
+      ggtitle(paste0("FOLD ",f))+
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)), check_overlap = F, size= 3) +
+      ylim(0, 0.4) +
+      labs(x = "Age (years)",
+           y = "Cortical thickness (mm)") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5)) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+  
+  # THIRD FOLD (fold 8th)
+  f <- folds[3]
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions_plot  <- subset(df_predictions, fold==f) 
+  df_predictions_plot  <- subset(df_predictions_plot, region==reg_name) 
+  df_predictions_test <- subset(df_predictions_plot, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                               idvar = c("subID", "timepoint"), 
+                               timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint",paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name))
+  
+  df_to_plot <- df_merged %>%
+    select("age","subID","timepoint", 
+           paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name)) %>%
+    dplyr::arrange(subID)
+
+  colnames(df_to_plot) <- c("age","subID","timepoint","y_true","y_pred")
+  df_to_plot <- df_to_plot %>%
+    mutate(diff=abs(y_true-y_pred))
+
+  # GRAPHICS
+  fold3 <- ggplot(df_to_plot) +
+      ggtitle(paste0("FOLD ",f))+
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)), check_overlap = F, size= 3) +
+      ylim(0, 0.4) +
+      labs(x = "Age (years)",
+           y = "Cortical thickness (mm)") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5)) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+
+  figure <- ggarrange(fold1, fold2, fold3,
+                      ncol = 3, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob(paste0("Difference between target and predicted data (",
+                                         region_short,")"), 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+
+```{r include=FALSE}
+df_68  <- getData(parc = "68")
+df <- DataPreparation(df = df_68,
+                      parc = "68",
+                      harmonization = T,
+                      match = F)
+measure <- "_CT_freesurfer"
+reg_names  <- colnames(df%>%dplyr::select(ends_with(measure)))
+reg <- which(reg_names=="rh_precentral_CT_freesurfer",arr.ind = FALSE, useNames = TRUE) 
+folds <- c(6,7,8)
+```
+
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_diff_1reg(df, predictions_68NoM, measure, reg, folds)
+rm(folds, reg_names, reg, measure, df, df_68)
+```
+
+
+
+# SPECIAL CASE 3:
+
+# SCATTERPLOT 8, 9 and 10th FOLD (308M): rh_postcentral_part1
+
+## Data used to train and test this region/fold
+
+```{r echo=FALSE}
+plot_scatterplot_train_test_2reg <- function(df, measure, regs, f) {
+  reg_names <- colnames(df%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names <- sub(measure, "",reg_names) # Delete termination to get a cleaner name
+  new.colnames <- sub(measure, "",colnames(df)) 
+  colnames(df) <- new.colnames
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df[df[,"dcode"]==0, ] 
+  df_pat <- df[df[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  num_folds <- 10
+  
+  # we create 10 folds with the IDs:
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  
+  df <- df[ , c(reg_names[regs], var_names)] # df with only reg_names[regs]
+  df$dcode <- factor(df$dcode)
+  reg_names <- reg_names[regs]
+
+  df  <- subset(df, dcode==0) # Only HC data, not patients
+  train_df <- subset(df, subID%in%train_ids_hc)
+  test_df  <- subset(df, subID%in%test_ids_hc)
+  train_df$partition <- "train"
+  test_df$partition <- "test"
+  df <- combine(train_df, test_df)
+
+  # GRAPHICdf, 
+  reg1 <- ggplot(df, aes_string(x="age", y=reg_names[1], 
+                                group= "subID", color="partition")) +
+    geom_line()+
+    geom_point() +
+    labs(color = "Partition\n") +
+    ggtitle(reg_names[1])+
+    ylim(1.2, 3.5) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.line    = element_line(colour = "black"),
+          plot.title   = element_text(hjust = 0.5),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank()) +
+    scale_fill_discrete(name = "Partition", 
+                        labels = c("Train data", "Test data")) +
+    scale_colour_manual(name = " ",
+                        labels = c("Test data", "Train data"), 
+                        values = c("#FF0000CC", "#0000FF40"))
+    
+    
+  reg2 <- ggplot(df, aes_string(x="age", y=reg_names[2], 
+                                group= "subID", color="partition")) +
+    geom_line()+
+    geom_point() +
+    labs(color = "Partition\n") +
+    ggtitle(reg_names[2])+
+    ylim(1.2, 3.5) +
+    theme(panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.line    = element_line(colour = "black"),
+          plot.title   = element_text(hjust = 0.5),
+          axis.title.x = element_blank(),
+          axis.title.y = element_blank()) +
+    scale_fill_discrete(name = "Partition", 
+                        labels = c("Train data", "Test data")) +
+    scale_colour_manual(name = " ",
+                        labels = c("Test data", "Train data"), 
+                        values = c("#FF0000CC", "#0000FF40"))
+        
+  # Test 440154FF ---> 440154CC
+  # Train B8DE29FF --> B8DE2940
+  # Adjust transparency in HEX colors:
+  # adjustcolor("red", alpha.f = 0.8) # Test
+  # adjustcolor("blue", alpha.f = 0.25) # Train
+
+  
+  figure <- ggarrange(reg1, reg2,
+                      ncol = 2, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob("Train vs Test data\n", 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+```{r include=FALSE}
+df_308  <- getData(parc = "308")
+df <- DataPreparation(df = df_308,
+                      parc = "308",
+                      harmonization = T,
+                      match = T)
+measure <- "_thickness"
+performance_308M_f <- read.csv("/data_J/Results/Files/performance_308M_f.csv")
+# performance_308M_f <- performance_308M_f[performance_308M_f[,"fold"]==9, ]
+
+reg_names  <- colnames(df%>%dplyr::select(ends_with(measure)))
+reg <- which(reg_names=="rh_postcentral_part1_thickness", arr.ind = FALSE, useNames = TRUE) # Reg mal
+regs <- c(reg, reg+1)
+
+folds <- c(8, 9, 10)
+f <- 9
+```
+
+```{r echo=FALSE, warning=FALSE}
+plot_scatterplot_train_test_1reg(df, measure, reg, folds)
+plot_scatterplot_train_test_2reg(df, measure, regs, f)
+```
+
+
+## Target data vs predicted data
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_2reg <- function(df_orig, df_predictions, measure, regs, f) {
+  
+  # DF_PREDICTIONS Change region names rh_temporalpole_CT_freesurfer -> rh_temporalpole
+  reg_names <- df_predictions$region
+  new_reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  df_predictions$region <- new_reg_names # Rename all the columns
+
+  # DF_ORIGIN Change region names rh_temporalpole_CT_freesurfer -> rh_temporalpole
+  reg_names <- colnames(df_orig%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  new.colnames <- sub(measure, "", colnames(df_orig)) # ALL COLNAMES # Delete termination to get a cleaner name
+  colnames(df_orig) <- new.colnames # Rename all the columns
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df_orig[df_orig[,"dcode"]==0, ] 
+  df_pat <- df_orig[df_orig[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers of healthy subjects and patients:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  # we create 10 folds with the IDs:
+  num_folds <- 10
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  ##### UNTIL HERE CROSS-VAL SUBJECTS IDENTIFICATION #####
+
+  # DF_ORIG
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  reg_names <- reg_names[regs]
+  df_orig <- df_orig[ , c(reg_names, var_names)] # df_orig with only relevant data
+  
+  # ONLY HEALTHY CONTROLS
+  df_orig$dcode <- factor(df_orig$dcode)
+  df_orig  <- subset(df_orig, dcode==0) 
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions   <- subset(df_predictions, fold==f) 
+  df_predictions1  <- subset(df_predictions, region==reg_names[1]) 
+  df_predictions2  <- subset(df_predictions, region==reg_names[2]) 
+  df_predictions_m <- rbind(df_predictions1, df_predictions2)
+  df_predictions_test <- subset(df_predictions_m, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                                 idvar = c("subID", "timepoint"), 
+                                 timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint","y_true.rh_postcentral_part1", 
+           "y_pred.rh_postcentral_part1", "y_true.rh_postcentral_part2", 
+           "y_pred.rh_postcentral_part2")
+
+  df_to_plot_reg_1 <- df_merged %>%
+    select("age","subID","timepoint",
+           "y_true.rh_postcentral_part1",
+           "y_pred.rh_postcentral_part1") %>%
+    dplyr::arrange(subID)
+  
+  reg1_name <- sub("y_pred.", "",colnames(df_to_plot_reg_1)[5]) # Get region name
+  colnames(df_to_plot_reg_1) <- c("age","subID","timepoint","y_true","y_pred")
+  
+  df_to_plot_reg_2 <- df_merged %>%
+  select("age","subID","timepoint", 
+           "y_true.rh_postcentral_part2",
+           "y_pred.rh_postcentral_part2") %>%
+    dplyr::arrange(subID)
+  
+  reg2_name <- sub("y_pred.", "",colnames(df_to_plot_reg_2)[5]) # Get region name
+  colnames(df_to_plot_reg_2) <- c("age","subID","timepoint","y_true","y_pred")
+
+  
+  ylim.min <- min(c(df_to_plot_reg_1$y_true, df_to_plot_reg_1$y_pred, 
+                    df_to_plot_reg_2$y_true, df_to_plot_reg_2$y_pred))
+  
+  ylim.max <- max(c(df_to_plot_reg_1$y_true, df_to_plot_reg_1$y_pred, 
+                    df_to_plot_reg_2$y_true, df_to_plot_reg_2$y_pred))
+  
+  # GRAPHICS
+  reg1 <- ggplot(df_to_plot_reg_1) +
+      # PREDICTIONS
+      geom_line(aes(x=age, y=y_pred, group= subID, color= "y_pred"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_pred, group= subID, color="y_pred"), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_1[df_to_plot_reg_1$timepoint==1, ], 
+              aes(x=age, y=y_pred, label=paste0(subID)), check_overlap = F, size= 3) +
+      # TRUE VALUES
+      geom_line(aes(x=age, y=y_true, group= subID, color= "y_true"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_true, group= subID, color="y_true"), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_1[df_to_plot_reg_1$timepoint==1, ], 
+            aes(x=age, y=y_true, label=paste0(subID)),check_overlap = F, size= 3) +
+      ggtitle(reg1_name)+
+      ylim(ylim.min, ylim.max) +
+      labs(color = "Partition\n") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank()) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+    
+  reg2 <- ggplot(df_to_plot_reg_2) +
+      # PREDICTIONS
+      geom_line(aes(x=age, y=y_pred, group= subID, color= "y_pred"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_pred, group= subID, color="y_pred"), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_2[df_to_plot_reg_2$timepoint==1, ], 
+              aes(x=age, y=y_pred, label=paste0(subID)),check_overlap = F, size= 3) +
+      # TRUE VALUES
+      geom_line(aes(x=age, y=y_true, group= subID, color= "y_true"), alpha=0.4)+
+      geom_point(aes(x=age, y=y_true, group= subID, color="y_true"), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_2[df_to_plot_reg_2$timepoint==1, ], 
+          aes(x=age, y=y_true, label=paste0(subID)), check_overlap = F, size= 3) +
+      ggtitle(reg2_name)+
+      ylim(ylim.min, ylim.max) +
+      labs(color = "Partition\n") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank()) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+      
+  figure <- ggarrange(reg1, reg2,
+                      ncol = 2, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob("Target vs Predicted data\n", 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_1reg(df, predictions_308M, measure, reg, folds)
+plot_scatterplot_pred_target_2reg(df, predictions_308M, measure, regs, f)
+```
+
+
+## Difference between target data vs predicted data 
+
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_diff_1reg <- function(df_orig, df_predictions, measure, reg, folds) {
+  
+  # DF_PREDICTIONS (Change region names) 
+  # rh_precentral_CT_freesurfer -> rh_precentral
+  reg_names <- df_predictions$region
+  new_reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  df_predictions$region <- new_reg_names # Rename all the columns
+
+  # DF_ORIGIN (Change region names) 
+  reg_names <- colnames(df_orig%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  region_short <- reg_names[reg]
+  new.colnames <- sub(measure, "", colnames(df_orig)) # ALL COLNAMES # Delete termination to get a cleaner name
+  colnames(df_orig) <- new.colnames # Rename all the columns
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df_orig[df_orig[,"dcode"]==0, ] 
+  df_pat <- df_orig[df_orig[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers of healthy subjects and patients:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  # we create 10 folds with the IDs:
+  num_folds <- 10
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # DF_ORIG
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  reg_name <- reg_names[reg]
+  df_orig <- df_orig[ , c(reg_name, var_names)] # df_orig with only relevant data
+  # ONLY HEALTHY CONTROLS
+  df_orig$dcode <- factor(df_orig$dcode)
+  df_orig  <- subset(df_orig, dcode==0) 
+
+  # FIRST FOLD (fold 6th)
+  f <- folds[1]
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions_plot  <- subset(df_predictions, fold==f) 
+  df_predictions_plot  <- subset(df_predictions_plot, region==reg_name) 
+  df_predictions_test <- subset(df_predictions_plot, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                               idvar = c("subID", "timepoint"), 
+                               timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint",paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name))
+  
+  df_to_plot <- df_merged %>%
+    select("age","subID","timepoint", 
+           paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name)) %>%
+    dplyr::arrange(subID)
+
+  colnames(df_to_plot) <- c("age","subID","timepoint","y_true","y_pred")
+  df_to_plot <- df_to_plot %>%
+    mutate(diff=abs(y_true-y_pred))
+
+  # GRAPHICS
+  fold1 <- ggplot(df_to_plot) +
+      ggtitle(paste0("FOLD ",f))+
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)), check_overlap = F, size= 3) +
+      ylim(0, 0.4) +
+      labs(x = "Age (years)",
+           y = "Cortical thickness (mm)") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5)) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+  
+  # SECOND FOLD (fold 7th)
+  f <- folds[2]
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions_plot  <- subset(df_predictions, fold==f) 
+  df_predictions_plot  <- subset(df_predictions_plot, region==reg_name) 
+  df_predictions_test <- subset(df_predictions_plot, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                               idvar = c("subID", "timepoint"), 
+                               timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint",paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name))
+  
+  df_to_plot <- df_merged %>%
+    select("age","subID","timepoint", 
+           paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name)) %>%
+    dplyr::arrange(subID)
+
+  colnames(df_to_plot) <- c("age","subID","timepoint","y_true","y_pred")
+  df_to_plot <- df_to_plot %>%
+    mutate(diff=abs(y_true-y_pred))
+
+  # GRAPHICS
+  fold2 <- ggplot(df_to_plot) +
+      ggtitle(paste0("FOLD ",f))+
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)), check_overlap = F, size= 3) +
+      ylim(0, 0.4) +
+      labs(x = "Age (years)",
+           y = "Cortical thickness (mm)") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5)) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+  
+  # THIRD FOLD (fold 8th)
+  f <- folds[3]
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  # DF_PREDICTIONS
+  df_predictions_plot  <- subset(df_predictions, fold==f) 
+  df_predictions_plot  <- subset(df_predictions_plot, region==reg_name) 
+  df_predictions_test <- subset(df_predictions_plot, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                               idvar = c("subID", "timepoint"), 
+                               timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint",paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name))
+  
+  df_to_plot <- df_merged %>%
+    select("age","subID","timepoint", 
+           paste0("y_true.", reg_name), 
+           paste0("y_pred.", reg_name)) %>%
+    dplyr::arrange(subID)
+
+  colnames(df_to_plot) <- c("age","subID","timepoint","y_true","y_pred")
+  df_to_plot <- df_to_plot %>%
+    mutate(diff=abs(y_true-y_pred))
+
+  # GRAPHICS
+  fold3 <- ggplot(df_to_plot) +
+      ggtitle(paste0("FOLD ",f))+
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot[df_to_plot$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)), check_overlap = F, size= 3) +
+      ylim(0, 0.4) +
+      labs(x = "Age (years)",
+           y = "Cortical thickness (mm)") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5)) +
+      scale_colour_manual(name = " ",
+                          values = c("y_pred"="red", "y_true"="blue"),
+                          labels = c("Predicted values", "Target values"))
+
+  figure <- ggarrange(fold1, fold2, fold3,
+                      ncol = 3, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob(paste0("Difference between target and predicted data (",
+                                         region_short,")"), 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_diff_2reg <- function(df_orig, df_predictions, measure, regs, f) {
+  
+  # DF_PREDICTIONS Change region names rh_temporalpole_CT_freesurfer -> rh_temporalpole
+  reg_names <- df_predictions$region
+  new_reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  df_predictions$region <- new_reg_names # Rename all the columns
+
+  # DF_ORIGIN Change region names rh_temporalpole_CT_freesurfer -> rh_temporalpole
+  reg_names <- colnames(df_orig%>%dplyr::select(ends_with(measure))) # Get the names of all the regions
+  reg_names <- sub(measure, "",reg_names) # REG NAMES ONLY # Delete termination to get a cleaner name
+  new.colnames <- sub(measure, "", colnames(df_orig)) # ALL COLNAMES # Delete termination to get a cleaner name
+  colnames(df_orig) <- new.colnames # Rename all the columns
+  
+  # We separate data from healthy subjects and patients:
+  df_hc  <- df_orig[df_orig[,"dcode"]==0, ] 
+  df_pat <- df_orig[df_orig[,"dcode"]==1, ] 
+  
+  # We get the unique identifiers of healthy subjects and patients:
+  ids_hc  <- unique(df_hc$subID)
+  ids_pat <- unique(df_pat$subID)
+  
+  # we create 10 folds with the IDs:
+  num_folds <- 10
+  set.seed(123) # seed for replicability
+  folds_hc <- createFolds(ids_hc, k=num_folds, list=TRUE, returnTrain=TRUE)
+  set.seed(123) # seed for replicability
+  folds_pat <- createFolds(ids_pat, k=num_folds, list=TRUE, returnTrain=TRUE)
+  
+  # We get the subID of the train-test healthy subjects and controls in this fold f
+  train_ids_hc <- ids_hc[folds_hc[[f]]]
+  test_ids_hc  <- ids_hc[-folds_hc[[f]]]
+  train_ids_pat <- ids_pat[folds_pat[[f]]]
+  test_ids_pat  <- ids_pat[-folds_pat[[f]]]
+  
+  ##### UNTIL HERE CROSS-VAL SUBJECTS IDENTIFICATION #####
+
+  # DF_ORIG
+  var_names <- c("age", "scode", "subID", "euler", "timepoint", "dcode")
+  reg_names <- reg_names[regs]
+  df_orig <- df_orig[ , c(reg_names, var_names)] # df_orig with only relevant data
+  # ONLY HEALTHY CONTROLS
+  df_orig$dcode <- factor(df_orig$dcode)
+  df_orig  <- subset(df_orig, dcode==0) 
+  # SEPARATE TRAIN AND TEST HEALTHY CONTROLS DATA FROM FOLD F
+  df_orig_test  <- subset(df_orig, subID%in%test_ids_hc)
+  df_orig_test$partition  <- "test"
+  
+  
+  # DF_PREDICTIONS
+  df_predictions   <- subset(df_predictions, fold==f) 
+  df_predictions1  <- subset(df_predictions, region==reg_names[1]) 
+  df_predictions2  <- subset(df_predictions, region==reg_names[2]) 
+  df_predictions_m <- rbind(df_predictions1, df_predictions2)
+  df_predictions_test <- subset(df_predictions_m, subID%in%test_ids_hc)
+  df_predictions_test <- df_predictions_test %>%
+    select("region", "subID", "timepoint", "y_true", "y_pred")
+  
+  df_predictions_test <- reshape(df_predictions_test, 
+                                 idvar = c("subID", "timepoint"), 
+                                 timevar = "region", direction = "wide")
+
+  df_merged <- merge(df_orig_test, df_predictions_test, by=c("subID","timepoint"))
+  df_merged <- df_merged %>%
+    select("age","subID","timepoint","y_true.rh_postcentral_part1", 
+           "y_pred.rh_postcentral_part1", "y_true.rh_postcentral_part2", 
+           "y_pred.rh_postcentral_part2")
+  
+  df_to_plot_reg_1 <- df_merged %>%
+    select("age","subID","timepoint",
+           "y_true.rh_postcentral_part1",
+           "y_pred.rh_postcentral_part1") %>%
+    dplyr::arrange(subID)
+  
+  reg1_name <- sub("y_pred.", "",colnames(df_to_plot_reg_1)[5]) # Get region name
+  colnames(df_to_plot_reg_1) <- c("age","subID","timepoint","y_true","y_pred")
+  
+  df_to_plot_reg_2 <- df_merged %>%
+  select("age","subID","timepoint", 
+           "y_true.rh_postcentral_part2",
+           "y_pred.rh_postcentral_part2") %>%
+    dplyr::arrange(subID)
+  
+  reg2_name <- sub("y_pred.", "",colnames(df_to_plot_reg_2)[5]) # Get region name
+  colnames(df_to_plot_reg_2) <- c("age","subID","timepoint","y_true","y_pred")
+
+  df_to_plot_reg_1 <- df_to_plot_reg_1 %>%
+    mutate(diff=abs(y_true-y_pred))
+  
+  df_to_plot_reg_2 <- df_to_plot_reg_2 %>%
+    mutate(diff=abs(y_true-y_pred))
+
+  # GRAPHICS
+  reg1 <- ggplot(df_to_plot_reg_1) +
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_1[df_to_plot_reg_1$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)), check_overlap = F, size= 3) +
+      ggtitle(reg1_name)+
+      ylim(0, 0.4) +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank())
+  reg2 <- ggplot(df_to_plot_reg_2) +
+      # PREDICTIONS
+      geom_line(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_point(aes(x=age, y=diff, group= subID), alpha=0.4)+
+      geom_text(data = df_to_plot_reg_2[df_to_plot_reg_2$timepoint==1, ], 
+              aes(x=age, y=diff, label=paste0(subID)),check_overlap = F, size= 3) +
+      ggtitle(reg2_name)+
+      ylim(0, 0.4) +
+      labs(color = "Partition\n") +
+      theme(panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.background = element_blank(),
+            axis.line    = element_line(colour = "black"),
+            plot.title   = element_text(hjust = 0.5),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank())
+      
+  figure <- ggarrange(reg1, reg2,
+                      ncol = 2, nrow = 1,
+                      legend = "right",
+                      common.legend = TRUE)
+  
+  annotate_figure(figure,
+                  left = text_grob("Cortical thickness (mm)",
+                                   rot = 90),
+                  bottom = text_grob("Age (years)"),
+                  fig.lab.face = "bold",
+                  top = text_grob("Difference between target and predicted data\n", 
+                                  face = "bold", size = 15, color = "black"))
+}
+```
+
+```{r echo=FALSE}
+plot_scatterplot_pred_target_diff_1reg(df, predictions_308M, measure, reg, folds)
+plot_scatterplot_pred_target_diff_2reg(df, predictions_308M, measure, regs, f)
+```
+
+
+```{r eval=FALSE, include=FALSE}
+# Tabla presentación SIRS: SMSE, SMAE, R2. Mean performance of the models
+performance_68NoM  <- read.csv("/data_J/Results/Files/performance_68NoM.csv" )
+table_performance_68NoM <- performance_68NoM %>%
+  # dplyr::group_by(diagnose)%>%
+  dplyr::summarise(SMSEm=round(mean(SMSE),2),
+                   SMSEs=round(sd(SMSE),2),
+                   SMAEm=round(mean(SMAE),2),
+                   SMAEs=round(sd(SMAE),2),
+                   R2m=round(mean(R2),2),
+                   R2s=round(sd(R2),2))
+```
+
+
+
+
