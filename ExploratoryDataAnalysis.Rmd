@@ -59,8 +59,8 @@ tinytex::install_tinytex()
 
 ```{r, warning=F, message = F}
 setwd("/data_J/Scripts")
-source("1_DataPreparation.R")
-source("4_EDA.R")
+source("functions/1_DataPreparation.R")
+source("functions/4_EDA.R")
 ```
 
 ### Load data

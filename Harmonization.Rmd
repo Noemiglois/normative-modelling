@@ -42,7 +42,7 @@ knitr::opts_chunk$set(
 
 ```{r, warning=F, message = F, echo = FALSE}
 setwd("/data_J/Scripts")
-source("1_DataPreparation.R")
+source("functions/1_DataPreparation.R")
 ```
 
 

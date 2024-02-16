@@ -9,11 +9,6 @@ getData <- function(parc){
       cat("File parc68 doesn't exist, creating...\n")
       
       # Measures from both hemispheres are combined. 
-      # # IGI
-      # df_lh_Igi   <- read.csv("/data_J/Data/metrics/lh.aparc.lgi.csv")
-      # df_rh_Igi   <- read.csv("/data_J/Data/metrics/rh.aparc.lgi.csv")
-      # df_Igi <- merge(df_lh_Igi, df_rh_Igi, by="ID", all.x=T)
-      # rm(df_lh_Igi, df_rh_Igi)
       
       # CT
       df_lh_CT   <- read.csv("/data_J/Data/metrics/lh.aparc.thickness.csv")[,1:35]

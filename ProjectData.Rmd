@@ -29,7 +29,7 @@ rm(list.of.packages, new.packages)
 
 ```{r, warning=F, message = F, echo = FALSE}
 setwd("/data_J/Scripts")
-source("1_DataPreparation.R")
+source("functions/1_DataPreparation.R")
 ```
 
 Two different parcellations were used when processing the brain magnetic resonance images. The covariates are stored in two datasets (planU_morphosim_rawdatabase.csv and planU_euler.csv), and the info of each parcellation scheme is organised as follows:

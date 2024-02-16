@@ -33,8 +33,8 @@ rm(list.of.packages, new.packages)
 
 ```{r, warning=F, message = F, echo = FALSE}
 setwd("/data_J/Scripts")
-source("1_DataPreparation.R")
-source("4_EDA.R")
+source("functions/1_DataPreparation.R")
+source("functions/4_EDA.R")
 ```
 
 

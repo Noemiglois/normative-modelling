@@ -38,7 +38,7 @@ rm(list.of.packages, new.packages)
 ncores <- detectCores()
 
 setwd("/data_J/Scripts")
-source("1_DataPreparation.R")
+source("functions/1_DataPreparation.R")
 ```
 
 

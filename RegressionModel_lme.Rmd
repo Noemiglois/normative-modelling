@@ -60,10 +60,10 @@ tinytex::install_tinytex()
 
 ```{r, warning=F, message = F}
 setwd("/data_J/Scripts")
-source("1_DataPreparation.R")
-source("2_RegressionModel.R")
-source("3_Statistics.R")
-source("4_EDA.R")
+source("functions/1_DataPreparation.R")
+source("functions/2_RegressionModel.R")
+source("functions/3_Statistics.R")
+source("functions/4_EDA.R")
 ```
 
 ```{r, warning = F, message = F}
