@@ -45,7 +45,8 @@ The longitudinal normative model approach assesses individuals with regions devi
 
 
 
-
+## Notes
+Brain illustrations featured in this project were created using the FSBrain software.
 
 
 
