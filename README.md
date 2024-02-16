@@ -49,6 +49,9 @@ The longitudinal normative model approach assesses individuals with regions devi
 Brain illustrations featured in this project were created using the FSBrain software.
 
 
+## ¡Let's connect! 
+[![](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/noemigonzalezlois)
 
+July 2022
 
 
