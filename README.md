@@ -1,6 +1,9 @@
 ## Data
 
-This project utilizes the Utrecht Schizophrenia Project database (293 healthy controls, 168 schizophrenia patients). -it is a longitudinal database (baseline, 4-year follow-up, sometimes second follow-up image at 7.5 years). The database comprises 1075 images processed using FreeSurfer, providing cortical thickness, brain volume, and Euler number data for 68 or 308 regions. Additionally, demographic variables including age, sex, diagnosis, IQ, and symptom presence are collected.
+- Utrecht Schizophrenia Project database (293 healthy controls, 168 schizophrenia patients). 
+- Longitudinal database: baseline, 4-year follow-up, sometimes second follow-up image at 7.5 years. 
+- 1075 images processed with FreeSurfer, providing cortical thickness (CT), brain volume (BV), and Euler number data for 68 (atlas A) or 308 regions (atlas B). 
+- Additional variables: demographic variables (age, sex, diagnosis, IQ, and symptom presence).
 
 ![](images/atlas.png)
 
@@ -17,7 +20,7 @@ The remaining scripts are formatted in .Rmd files and leverage the functionaliti
 
 ## Results
 
-Various regression models are compared, using covariates such as age, sex, and Euler to predict cortical thickness in different brain regions. The performance of the models is evaluated in healthy subjects and patients using 10-fold cross-validation. The results are analyzed considering two spatial resolutions (68 and 308 regions) and before and after applying matching. It is found that the **LMEM longitudinal model with dynamic predictions** performs the best. Additionally, it is observed that models trained with **68 regions** outperform those trained with 308 regions, possibly due to the combination of a high-resolution atlas and a low-resolution scanner (1.5 T), which affects the accuracy of neurobiological measurements. Finally, it is decided to use the **post-matching dataset** due to its superior statistical performance for the study.
+Various regression models are compared, using covariates such as age, sex, and Euler to predict CT in different brain regions. The performance of the models is evaluated in healthy subjects and patients using 10-fold CV. The results are analyzed considering two spatial resolutions (68 and 308 regions) and before and after applying matching. It is found that the **LMEM longitudinal model with dynamic predictions** performs the best. Additionally, it is observed that models trained with **68 regions** outperform those trained with 308 regions, possibly due to the combination of a high-resolution atlas and a low-resolution scanner (1.5 T), which affects the accuracy of neurobiological measurements. Finally, it is decided to use the **post-matching dataset** due to its superior statistical performance for the study.
 
 ![](images/models.png)
 
@@ -32,7 +35,7 @@ The figure illustrates the percentage of brain regions that deviate from the nor
 
 ![](images/deviance_over_time.png)
 
-The longitudinal MN approach assesses individuals with regions deviating from the model.
+The longitudinal normative model approach assesses individuals with regions deviating from the model:
 
 - At baseline, the lateral occipital region had the highest deviation in patients.
 - At the first follow-up, the rostral middle frontal region showed the most deviation in patients.
